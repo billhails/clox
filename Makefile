@@ -1,19 +1,25 @@
 .PHONY: all clean
 
+CC=cc
+
 CFILES=$(wildcard src/*.c)
-HFILES=$(wildcard src/*.h)
 
 OBJ=$(patsubst src/%,obj/%,$(patsubst %.c,%.o,$(CFILES)))
+DEP=$(patsubst obj/%,dep/%,$(patsubst %.o,%.d,$(OBJ)))
 
 all: clox
+	./clox
 
 clox: $(OBJ)
-	cc -o $@ $(OBJ)
+	$(CC) -o $@ $(OBJ)
 
-$(OBJ): $(HFILES)
+-include $(DEP)
 
 $(OBJ): obj/%.o: src/%.c
-	cc -c $< -o $@
+	$(CC) -c $< -o $@
+
+$(DEP): dep/%.d: src/%.c
+	$(CC) -MM -MT $(patsubst dep/%,obj/%,$(patsubst %.d,%.o,$@)) -o $@ $<
 
 clean:
-	rm clox $(OBJ)
+	rm clox $(OBJ) $(DEP)
