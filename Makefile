@@ -1,4 +1,4 @@
-.PHONY: all clean
+.PHONY: all clean deps
 
 CC=cc
 
@@ -21,5 +21,8 @@ $(OBJ): obj/%.o: src/%.c
 $(DEP): dep/%.d: src/%.c
 	$(CC) -MM -MT $(patsubst dep/%,obj/%,$(patsubst %.d,%.o,$@)) -o $@ $<
 
-clean:
-	rm clox $(OBJ) $(DEP)
+clean: deps
+	rm -f clox $(OBJ)
+
+deps:
+	rm -f $(DEP)
