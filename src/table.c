@@ -76,6 +76,17 @@ bool tableSet(Table *table, ObjString *key, Value value) {
     return isNewKey;
 }
 
+bool tableDelete(Table *table, ObjString *key) {
+    if (table->count == 0) return false;
+
+    Entry *entry = findEntry(table->entries, table->capacity, key);
+    if (entry->key == NULL) return false;
+
+    entry->key = NULL;
+    entry->value = BOOL_VAL(true);
+    return true;
+}
+
 void tableAddAll(Table *from, Table *to) {
     for (int i = 0; i < from->capacity; i++) {
         Entry *entry = &from->entries[i];
