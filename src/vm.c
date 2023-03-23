@@ -185,6 +185,9 @@ static InterpretResult run() {
                 push(NUMBER_VAL(-AS_NUMBER(pop())));
                 break;
             case OP_PRINT: {
+#ifdef DEBUG_TRACE_EXECUTION
+                printf(">>>> ");
+#endif
                 printValue(pop());
                 printf("\n");
                 break;
