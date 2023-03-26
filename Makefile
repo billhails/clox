@@ -8,7 +8,6 @@ OBJ=$(patsubst src/%,obj/%,$(patsubst %.c,%.o,$(CFILES)))
 DEP=$(patsubst obj/%,dep/%,$(patsubst %.o,%.d,$(OBJ)))
 
 all: clox
-	./clox
 
 clox: $(OBJ)
 	$(CC) -o $@ $(OBJ)
