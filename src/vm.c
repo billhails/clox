@@ -47,8 +47,7 @@ static void defineNative(const char *name, NativeFn function) {
     push(OBJ_VAL(copyString(name, (int)strlen(name))));
     push(OBJ_VAL(newNative(function)));
     tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
-    pop();
-    pop();
+    popn(2);
 }
 
 void initVM() {
@@ -75,7 +74,7 @@ Value pop() {
     return *vm.stackTop;
 }
 
-static void popn(uint8_t num) {
+void popn(uint8_t num) {
     vm.stackTop -= num;
 }
 

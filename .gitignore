@@ -2,3 +2,5 @@ obj/
 dep/
 clox
 .*.swp
+.$*.drawio.bkp
+scratch*

@@ -37,5 +37,6 @@ void freeVM();
 InterpretResult interpret(const char *source);
 void push(Value value);
 Value pop();
+void popn(uint8_t n);
 
 #endif
