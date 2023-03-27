@@ -1,0 +1,9 @@
+fun generateGarbage(string, n) {
+    if (n > 0) {
+        generateGarbage(string, n - 1);
+        generateGarbage(string, n - 1);
+        var s = string;
+    }
+}
+
+generateGarbage("junk", 25);
