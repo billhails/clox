@@ -1,0 +1,16 @@
+class A {
+    init(arg) {
+        this.arg = arg;
+    }
+
+    method() { print "A + " + this.arg; }
+}
+
+class B < A {
+    method() {
+        var closure = super.method;
+        closure();
+    }
+}
+
+B("B").method();
