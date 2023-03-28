@@ -1,6 +1,6 @@
 .PHONY: all clean deps
 
-CC=cc -g
+CC=cc -O2
 
 CFILES=$(wildcard src/*.c)
 
