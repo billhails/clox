@@ -1,0 +1,7 @@
+class Test {
+    init(arg) {
+        print "Test initialized with " + arg;
+    }
+}
+
+Test("value");

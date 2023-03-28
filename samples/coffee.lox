@@ -1,0 +1,12 @@
+class Coffee {
+    init(coffee) {
+        this.coffee = coffee;
+    }
+
+    brew() {
+        print "enjoy your cup of " + this.coffee;
+    }
+}
+
+var coffee = Coffee("java");
+coffee.brew();
