@@ -1,6 +1,10 @@
-.PHONY: all clean deps
+.PHONY: all clean deps profile
 
-CC=cc -O2
+PROFILING=-pg
+OPTIMIZING=-O2
+DEBUGGING=-g
+
+CC=cc $(OPTIMIZING)
 
 CFILES=$(wildcard src/*.c)
 
@@ -27,9 +31,13 @@ obj:
 	mkdir $@
 
 clean: deps
-	rm -f clox $(OBJ)
+	rm -f clox $(OBJ) callgrind.out.*
 
 deps:
 	rm -f $(DEP)
 
-# vim: set noet,sw=8,tabstop=8
+profile: clox
+	rm -f callgrind.out.*
+	valgrind --tool=callgrind ./clox ./samples/zoo.lox
+
+# vim: noet,sw=8,tabstop=8

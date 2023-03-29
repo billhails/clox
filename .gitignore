@@ -4,3 +4,4 @@ clox
 .*.swp
 .$*.drawio.bkp
 scratch*
+callgrind.out.*
