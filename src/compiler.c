@@ -842,6 +842,21 @@ static void whileStatement() {
     emitByte(OP_POP);
 }
 
+static void doStatement() {
+    int loopStart = currentChunk()->count;
+    statement();
+    consume(TOKEN_WHILE, "Expect 'while' after 'do' statement");
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'do' statement 'while'");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'do' statement 'while' '(' expression");
+    consume(TOKEN_SEMICOLON, "Expect ';' after 'do' statement 'while' '(' expression ')'");
+    int loopEnd = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP);
+    emitLoop(loopStart);
+    patchJump(loopEnd);
+    emitByte(OP_POP);
+}
+
 static void synchronize() {
     parser.panicMode = false;
 
@@ -855,6 +870,7 @@ static void synchronize() {
             case TOKEN_FOR:
             case TOKEN_IF:
             case TOKEN_WHILE:
+            case TOKEN_DO:
             case TOKEN_PRINT:
             case TOKEN_RETURN:
                 return;
@@ -891,6 +907,8 @@ static void statement() {
         returnStatement();
     } else if (match(TOKEN_WHILE)) {
         whileStatement();
+    } else if (match(TOKEN_DO)) {
+        doStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
         beginScope();
         block();
