@@ -5,8 +5,11 @@ fun map(fn, lst) {
     return fn(<lst) @ map(fn, >lst);
 }
 
-fun times2(x) {
-    return x * 2;
+fun timesBy(x) {
+    fun other(y) {
+        return x * y;
+    }
+    return other;
 }
 
-print map(times2, [1, 2, 3, 4]);
+print map(timesBy(2), [1, 2, 3, 4]);

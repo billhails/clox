@@ -1,0 +1,28 @@
+fun True(x, y) {
+    return x;
+}
+
+fun False(x, y) {
+    return y;
+}
+
+fun If(q, x, y) {
+    return q(x, y);
+}
+
+fun cons(a, b) {
+    fun f(q) {
+        return If(q, a, b);
+    }
+    return f;
+}
+
+fun car(x) {
+    return x(True);
+}
+
+fun cdr(x) {
+    return x(False);
+}
+
+print car(cdr(cons(1, cons(2, cons(3, [])))));
