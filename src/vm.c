@@ -378,6 +378,72 @@ static InterpretResult run() {
                 push(BOOL_VAL(valuesEqual(a, b)));
                 break;
             }
+            case OP_CONS: {
+                Value b = pop();
+                Value a = pop();
+                ObjCons *cons = newCons(a, b);
+                push(OBJ_VAL(cons));
+                break;
+            }
+            case OP_CAR: {
+                if (!IS_OBJ(peek(0))) {
+                    runtimeError("Operand must be a cons cell");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                if (!IS_CONS(peek(0))) {
+                    runtimeError("Operand must be a cons cell");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                push(AS_CAR(pop()));
+                break;
+            }
+            case OP_CDR: {
+                if (!IS_OBJ(peek(0))) {
+                    runtimeError("Operand must be a cons cell");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                if (!IS_CONS(peek(0))) {
+                    runtimeError("Operand must be a cons cell");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                push(AS_CDR(pop()));
+                break;
+            }
+            case OP_APPEND: {
+                Value b = peek(0);
+                Value a = peek(1);
+                int count = 0;
+                for(;;) {
+                    if (IS_NIL(a)) break;
+                    if (!IS_OBJ(a)) {
+                        runtimeError("LHS operand to '@@' must be a proper list");
+                        return INTERPRET_RUNTIME_ERROR;
+                    }
+                    if (!IS_CONS(a)) {
+                        runtimeError("LHS operand to '@@' must be a proper list");
+                        return INTERPRET_RUNTIME_ERROR;
+                    }
+                    push(AS_CAR(a));
+                    a = AS_CDR(a);
+                    count++;
+                }
+                // at this pont we have all of the elements of the lhs on the
+                // stack individually, with the last at the top, and we know
+                // they came from a nil-terminated list.
+                push(b);
+                // now we just perform the requred number of cons operations
+                for (int i = 0; i < count; i++) {
+                    b = peek(0);
+                    a = peek(1);
+                    ObjCons *cons = newCons(a, b);
+                    popn(2);
+                    push(OBJ_VAL(cons));
+                }
+                Value result = pop();
+                popn(2);
+                push(result);
+                break;
+            }
             case OP_GREATER:  BINARY_OP(BOOL_VAL, >);          break;
             case OP_LESS:     BINARY_OP(BOOL_VAL, <);          break;
             case OP_ADD: {
@@ -388,7 +454,7 @@ static InterpretResult run() {
                     double a = AS_NUMBER(pop());
                     push(NUMBER_VAL(a + b));
                 } else {
-                    runtimeError("Operands mus be two numbers or two strings");
+                    runtimeError("Operands must be two numbers or two strings");
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;

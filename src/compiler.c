@@ -21,6 +21,7 @@ typedef struct {
 typedef enum {
     PREC_NONE,
     PREC_ASSIGNMENT,
+    PREC_CONS,
     PREC_OR,
     PREC_AND,
     PREC_EQUALITY,
@@ -415,6 +416,17 @@ static void binary(bool canAssign) {
     }
 }
 
+static void right(bool canAssign) {
+    TokenType operatorType = parser.previous.type;
+    ParseRule *rule = getRule(operatorType);
+    parsePrecedence(rule->precedence);
+    switch (operatorType) {
+        case TOKEN_AT:    emitByte(OP_CONS);   break;
+        case TOKEN_AT_AT: emitByte(OP_APPEND); break;
+        default:          return;
+    }
+}
+
 static void call(bool canAssign) {
     uint8_t argCount = argumentList();
     emitBytes(OP_CALL, argCount);
@@ -537,9 +549,29 @@ static void unary(bool canAssign) {
     TokenType operatorType = parser.previous.type;
     parsePrecedence(PREC_UNARY);
     switch (operatorType) {
-        case TOKEN_BANG:  emitByte(OP_NOT);    break;
-        case TOKEN_MINUS: emitByte(OP_NEGATE); break;
+        case TOKEN_BANG:    emitByte(OP_NOT);    break;
+        case TOKEN_MINUS:   emitByte(OP_NEGATE); break;
+        case TOKEN_LESS:    emitByte(OP_CAR);    break;
+        case TOKEN_GREATER: emitByte(OP_CDR);    break;
         default: return;
+    }
+}
+
+static void list(bool canAssign) {
+    int count = 0;
+    while (!check(TOKEN_RIGHT_SQUARE) && !check(TOKEN_EOF)) {
+        expression();
+        count++;
+        if (!match(TOKEN_COMMA)) {
+            break;
+        }
+    }
+
+    consume(TOKEN_RIGHT_SQUARE, "Expect ']' after list");
+    emitByte(OP_NIL);
+    while (count > 0) {
+        emitByte(OP_CONS);
+        count--;
     }
 }
 
@@ -555,13 +587,17 @@ ParseRule rules[] = {
     [TOKEN_SEMICOLON]       = {NULL,        NULL,   PREC_NONE},
     [TOKEN_SLASH]           = {NULL,        binary, PREC_FACTOR},
     [TOKEN_STAR]            = {NULL,        binary, PREC_FACTOR},
+    [TOKEN_LEFT_SQUARE]     = {list,        NULL,   PREC_NONE},
+    [TOKEN_RIGHT_SQUARE]    = {NULL,        NULL,   PREC_NONE},
+    [TOKEN_AT]              = {NULL,        right,  PREC_CONS},
+    [TOKEN_AT_AT]           = {NULL,        right,  PREC_CONS},
     [TOKEN_BANG]            = {unary,       NULL,   PREC_NONE},
     [TOKEN_BANG_EQUAL]      = {NULL,        binary, PREC_EQUALITY},
     [TOKEN_EQUAL]           = {NULL,        NULL,   PREC_NONE},
     [TOKEN_EQUAL_EQUAL]     = {NULL,        binary, PREC_EQUALITY},
-    [TOKEN_GREATER]         = {NULL,        binary, PREC_COMPARISON},
+    [TOKEN_GREATER]         = {unary,       binary, PREC_COMPARISON},
     [TOKEN_GREATER_EQUAL]   = {NULL,        binary, PREC_COMPARISON},
-    [TOKEN_LESS]            = {NULL,        binary, PREC_COMPARISON},
+    [TOKEN_LESS]            = {unary,       binary, PREC_COMPARISON},
     [TOKEN_LESS_EQUAL]      = {NULL,        binary, PREC_COMPARISON},
     [TOKEN_IDENTIFIER]      = {variable,    NULL,   PREC_NONE},
     [TOKEN_STRING]		    = {string,      NULL,   PREC_NONE},

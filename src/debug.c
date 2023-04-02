@@ -80,6 +80,10 @@ int disassembleInstruction(Chunk *chunk, int offset) {
         case OP_DIVIDE:        return simpleInstruction("OP_DIVIDE", offset);
         case OP_NOT:           return simpleInstruction("OP_NOT", offset);
         case OP_NEGATE:        return simpleInstruction("OP_NEGATE", offset);
+        case OP_CAR:           return simpleInstruction("OP_CAR", offset);
+        case OP_CDR:           return simpleInstruction("OP_CDR", offset);
+        case OP_CONS:          return simpleInstruction("OP_CONS", offset);
+        case OP_APPEND:        return simpleInstruction("OP_APPEND", offset);
         case OP_PRINT:         return simpleInstruction("OP_PRINT", offset);
         case OP_JUMP:          return jumpInstruction("OP_JUMP", 1, chunk, offset);
         case OP_JUMP_IF_FALSE: return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset);

@@ -17,6 +17,10 @@ const char *tokenName[] = {
     "TOKEN_SEMICOLON",
     "TOKEN_SLASH",
     "TOKEN_STAR",
+    "TOKEN_LEFT_SQUARE",
+    "TOKEN_RIGHT_SQUARE",
+    "TOKEN_AT",
+    "TOKEN_AT_AT",
     "TOKEN_BANG",
     "TOKEN_BANG_EQUAL",
     "TOKEN_EQUAL",
@@ -242,6 +246,9 @@ Token scanToken() {
         case '+': return makeToken(TOKEN_PLUS);
         case '/': return makeToken(TOKEN_SLASH);
         case '*': return makeToken(TOKEN_STAR);
+        case '[': return makeToken(TOKEN_LEFT_SQUARE);
+        case ']': return makeToken(TOKEN_RIGHT_SQUARE);
+        case '@': return makeToken(match('@') ? TOKEN_AT_AT : TOKEN_AT);
         case '!': return makeToken(match('=') ? TOKEN_BANG_EQUAL : TOKEN_BANG);
         case '=': return makeToken(match('=') ? TOKEN_EQUAL_EQUAL : TOKEN_EQUAL);
         case '<': return makeToken(match('=') ? TOKEN_LESS_EQUAL : TOKEN_LESS);

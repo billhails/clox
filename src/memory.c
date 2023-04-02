@@ -103,6 +103,11 @@ void blackenObject(Obj *object) {
             markValue(((ObjUpvalue *)object)->closed);
             break;
         }
+        case OBJ_CONS: {
+            markValue(((ObjCons *)object)->car);
+            markValue(((ObjCons *)object)->cdr);
+            break;
+        }
         case OBJ_NATIVE:
         case OBJ_STRING:
             break;
@@ -155,6 +160,11 @@ static void freeObject(Obj *object) {
         }
         case OBJ_UPVALUE: {
             FREE(ObjUpvalue, object);
+            break;
+        }
+        case OBJ_CONS: {
+            ObjCons *cons = (ObjCons *)object;
+            FREE(ObjCons, object);
             break;
         }
     }

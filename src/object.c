@@ -113,6 +113,13 @@ ObjString *copyString(const char *chars, int length) {
     return allocateString(heapChars, length, hash);
 }
 
+ObjCons *newCons(Value car, Value cdr) {
+    ObjCons *cons = ALLOCATE_OBJ(ObjCons, OBJ_CONS);
+    cons->car = car;
+    cons->cdr = cdr;
+    return cons;
+}
+
 ObjUpvalue *newUpvalue(Value *slot) {
     ObjUpvalue *upvalue = ALLOCATE_OBJ(ObjUpvalue, OBJ_UPVALUE);
     upvalue->closed = NIL_VAL;
@@ -151,6 +158,13 @@ void printObject(Value value) {
       break;
     case OBJ_STRING:
       printf("%s", AS_CSTRING(value));
+      break;
+    case OBJ_CONS:
+      printf("(");
+      printValue(AS_CAR(value));
+      printf(" @ ");
+      printValue(AS_CDR(value));
+      printf(")");
       break;
     case OBJ_UPVALUE:
       printf("<upvalue>");

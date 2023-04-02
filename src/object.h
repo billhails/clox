@@ -15,6 +15,7 @@
 #define IS_INSTANCE(value)     isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value)       isObjType(value, OBJ_NATIVE)
 #define IS_STRING(value)       isObjType(value, OBJ_STRING)
+#define IS_CONS(value)         isObjType(value, OBJ_CONS)
 
 #define AS_BOUND_METHOD(value) ((ObjBoundMethod *)AS_OBJ(value))
 #define AS_CLASS(value)        ((ObjClass *)AS_OBJ(value))
@@ -24,6 +25,8 @@
 #define AS_NATIVE(value)       (((ObjNative *)AS_OBJ(value))->function)
 #define AS_STRING(value)       ((ObjString *)AS_OBJ(value))
 #define AS_CSTRING(value)      (((ObjString *)AS_OBJ(value))->chars)
+#define AS_CAR(value)          (((ObjCons *)AS_OBJ(value))->car)
+#define AS_CDR(value)          (((ObjCons *)AS_OBJ(value))->cdr)
 
 typedef enum {
     OBJ_BOUND_METHOD,
@@ -33,6 +36,7 @@ typedef enum {
     OBJ_INSTANCE,
     OBJ_NATIVE,
     OBJ_STRING,
+    OBJ_CONS,
     OBJ_UPVALUE
 } ObjType;
 
@@ -63,6 +67,12 @@ struct ObjString {
     char *chars;
     uint32_t hash;
 };
+
+typedef struct {
+    Obj obj;
+    Value car;
+    Value cdr;
+} ObjCons;
 
 typedef struct ObjUpvalue {
     Obj obj;
@@ -104,6 +114,7 @@ ObjInstance *newInstance(ObjClass *klass);
 ObjNative *newNative(NativeFn function);
 ObjString *takeString(char *chars, int length);
 ObjString *copyString(const char *chars, int length);
+ObjCons *newCons(Value car, Value cdr);
 ObjUpvalue *newUpvalue(Value *slot);
 void printObject(Value value);
 
