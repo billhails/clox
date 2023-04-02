@@ -1,0 +1,12 @@
+fun map(fn, lst) {
+    if (lst == nil) {
+        return nil;
+    }
+    return fn(<lst) @ map(fn, >lst);
+}
+
+fun times2(x) {
+    return x * 2;
+}
+
+print map(times2, [1, 2, 3, 4]);
