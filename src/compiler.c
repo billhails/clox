@@ -388,7 +388,7 @@ static uint8_t argumentList() {
             argCount++;
         } while (match(TOKEN_COMMA));
     }
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments");
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after <argument-list>");
     return argCount;
 }
 
@@ -461,7 +461,7 @@ static void literal(bool canAssign) {
 
 static void grouping(bool canAssign) {
     expression();
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression");
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after '(' <expression>");
 }
 
 static void number(bool canAssign) {
@@ -569,7 +569,7 @@ static void list(bool canAssign) {
         }
     }
 
-    consume(TOKEN_RIGHT_SQUARE, "Expect ']' after list");
+    consume(TOKEN_RIGHT_SQUARE, "Expect ']' after '[' <list>");
     emitByte(OP_NIL);
     while (count > 0) {
         emitByte(OP_CONS);
@@ -633,7 +633,7 @@ static void parsePrecedence(Precedence precedence) {
     ParseFn prefixRule = getRule(parser.previous.type)->prefix;
 
     if (prefixRule == NULL) {
-        error("Expect expression");
+        error("Expect <expression>");
         return;
     }
 
@@ -664,7 +664,7 @@ static void block() {
         declaration();
     }
 
-    consume(TOKEN_RIGHT_BRACE, "Expect '}' after block");
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after <block>");
 }
 
 static void function(FunctionType type) {
@@ -683,7 +683,7 @@ static void function(FunctionType type) {
             defineVariable(constant);
         } while (match(TOKEN_COMMA));
     }
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters");
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after function parameters");
 
     consume(TOKEN_LEFT_BRACE, "Expect '{' before function body");
     block();
@@ -780,7 +780,7 @@ static void varDeclaration() {
 
 static void expressionStatement() {
     expression();
-    consume(TOKEN_SEMICOLON, "Expect ';' after expression");
+    consume(TOKEN_SEMICOLON, "Expect ';' after <expression>");
     emitByte(OP_POP);
 }
 
@@ -798,8 +798,8 @@ static void caseStatements() {
 static void switchStatement() {
     printf("switchStatement\n");
     consume(TOKEN_LEFT_PAREN, "Expect '(' after 'switch'");
-    expression(); // [vala]
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression");
+    expression();                                          // [vala]
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after <expression>");
     consume(TOKEN_LEFT_BRACE, "Expect '{' before switch statement body");
 
     int seenDefault = 0;
@@ -813,19 +813,20 @@ static void switchStatement() {
         }
         if (match(TOKEN_CASE)) {                           // [vala]
             if (breakCount == MAX_CASES) {
-                error("maximum case statements exceeded");
+                error("maximum switch cases exceeded");
                 breakCount = 0;
             }
             emitByte(OP_DUP);                              // [vala vala]
             expression();                                  // [vala vala valb]
-            consume(TOKEN_COLON, "Expect ':' afer case expression");
+            consume(TOKEN_COLON, "Expect ':' afer 'case' <expression>");
             emitByte(OP_EQUAL);                            // [vala bool]
-            nextCase = emitJump(OP_JUMP_IF_FALSE);         // [vala bool]
+            nextCase = emitJump(OP_JUMP_IF_FALSE);         // [vala bool] -> nextCase
             emitByte(OP_POP);                              // [vala]
             caseStatements();                              // [vala]
-            breaks[breakCount++] = emitJump(OP_JUMP);      // [vala]
-            patchJump(nextCase);                           // [vala bool]
+            breaks[breakCount++] = emitJump(OP_JUMP);      // [vala]      -> break
+            patchJump(nextCase);                           // [vala bool] <- nextCase
             emitByte(OP_POP);                              // [vala]
+
         } else if (match(TOKEN_DEFAULT)) {                 // [vala]
             if (breakCount == MAX_CASES) {
                 error("maximum case statements exceeded");
@@ -842,10 +843,10 @@ static void switchStatement() {
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after switch statement body");
 
     for (int i = 0; i < breakCount; i++) {
-        patchJump(breaks[i]);
+        patchJump(breaks[i]);                              // [vala]     <- break
     }
 
-    emitByte(OP_POP); // []
+    emitByte(OP_POP);                                      // []
 }
 
 static void forStatement() {
@@ -899,7 +900,7 @@ static void forStatement() {
 static void ifStatement() {
     consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'");
     expression();
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition");
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after '(' <condition>");
     int thenJump = emitJump(OP_JUMP_IF_FALSE);
     emitByte(OP_POP);
     statement();
@@ -913,7 +914,7 @@ static void ifStatement() {
 
 static void printStatement() {
     expression();
-    consume(TOKEN_SEMICOLON, "Expect ';' after print statement");
+    consume(TOKEN_SEMICOLON, "Expect ';' after 'print' <statement>");
     emitByte(OP_PRINT);
 }
 
@@ -929,7 +930,7 @@ static void returnStatement() {
             error("Can't return a value from an initializer");
         }
         expression();
-        consume(TOKEN_SEMICOLON, "Expect ';' after return value");
+        consume(TOKEN_SEMICOLON, "Expect ';' after 'return' <value>");
         emitByte(OP_RETURN);
     }
 }
@@ -938,7 +939,7 @@ static void whileStatement() {
     int loopStart = currentChunk()->count;
     consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'");
     expression();
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'while' condition");
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'while' <condition>");
 
     int exitJump = emitJump(OP_JUMP_IF_FALSE);
     emitByte(OP_POP);
@@ -949,18 +950,19 @@ static void whileStatement() {
 }
 
 static void doStatement() {
-    int loopStart = currentChunk()->count;
-    statement();
-    consume(TOKEN_WHILE, "Expect 'while' after 'do' statement");
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'do' statement 'while'");
-    expression();
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'do' statement 'while' '(' expression");
-    consume(TOKEN_SEMICOLON, "Expect ';' after 'do' statement 'while' '(' expression ')'");
-    int loopEnd = emitJump(OP_JUMP_IF_FALSE);
-    emitByte(OP_POP);
-    emitLoop(loopStart);
-    patchJump(loopEnd);
-    emitByte(OP_POP);
+    int loopStart = currentChunk()->count;       // []     <- loopStart
+    consume(TOKEN_LEFT_BRACE, "Expect '(' after 'do'");
+    block();                                     // []
+    consume(TOKEN_WHILE, "Expect 'while' after 'do' <block>");
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'");
+    expression();                                // [bool]
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'while' '(' <expression>");
+    consume(TOKEN_SEMICOLON, "Expect ';' after '(' <expression> ')'");
+    int loopEnd = emitJump(OP_JUMP_IF_FALSE);    // [bool] -> loopEnd
+    emitByte(OP_POP);                            // []
+    emitLoop(loopStart);                         // []     -> loopStart
+    patchJump(loopEnd);                          // [bool] <- loopEnd
+    emitByte(OP_POP);                            // []
 }
 
 static void synchronize() {
