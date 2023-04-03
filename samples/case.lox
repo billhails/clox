@@ -1,0 +1,9 @@
+switch (3) {
+    case 1:
+        print "found it";
+        print "found it";
+    case 2:
+        print "2?";
+    default:
+        print "hit default";
+}

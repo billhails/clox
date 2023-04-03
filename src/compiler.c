@@ -11,6 +11,8 @@
 #include "debug.h"
 #endif
 
+#define MAX_CASES 256
+
 typedef struct {
     Token current;
     Token previous;
@@ -591,6 +593,10 @@ ParseRule rules[] = {
     [TOKEN_RIGHT_SQUARE]    = {NULL,        NULL,   PREC_NONE},
     [TOKEN_AT]              = {NULL,        right,  PREC_CONS},
     [TOKEN_AT_AT]           = {NULL,        right,  PREC_CONS},
+    [TOKEN_SWITCH]          = {NULL,        NULL,   PREC_NONE},
+    [TOKEN_CASE]            = {NULL,        NULL,   PREC_NONE},
+    [TOKEN_COLON]           = {NULL,        NULL,   PREC_NONE},
+    [TOKEN_DEFAULT]         = {NULL,        NULL,   PREC_NONE},
     [TOKEN_BANG]            = {unary,       NULL,   PREC_NONE},
     [TOKEN_BANG_EQUAL]      = {NULL,        binary, PREC_EQUALITY},
     [TOKEN_EQUAL]           = {NULL,        NULL,   PREC_NONE},
@@ -778,6 +784,70 @@ static void expressionStatement() {
     emitByte(OP_POP);
 }
 
+static void caseStatements() {
+    beginScope();
+    while(   !check(TOKEN_RIGHT_BRACE)
+          && !check(TOKEN_EOF)
+          && !check(TOKEN_CASE)
+          && !check(TOKEN_DEFAULT)) {
+        statement();
+    }
+    endScope();
+}
+
+static void switchStatement() {
+    printf("switchStatement\n");
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'switch'");
+    expression(); // [vala]
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression");
+    consume(TOKEN_LEFT_BRACE, "Expect '{' before switch statement body");
+
+    int seenDefault = 0;
+    int breaks[MAX_CASES];
+    int breakCount = 0;
+    int nextCase = -1;
+
+    while(!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+        if (seenDefault) {
+            errorAtCurrent("'default' must be the last case in a switch statement");
+        }
+        if (match(TOKEN_CASE)) {                           // [vala]
+            if (breakCount == MAX_CASES) {
+                error("maximum case statements exceeded");
+                breakCount = 0;
+            }
+            emitByte(OP_DUP);                              // [vala vala]
+            expression();                                  // [vala vala valb]
+            consume(TOKEN_COLON, "Expect ':' afer case expression");
+            emitByte(OP_EQUAL);                            // [vala bool]
+            nextCase = emitJump(OP_JUMP_IF_FALSE);         // [vala bool]
+            emitByte(OP_POP);                              // [vala]
+            caseStatements();                              // [vala]
+            breaks[breakCount++] = emitJump(OP_JUMP);      // [vala]
+            patchJump(nextCase);                           // [vala bool]
+            emitByte(OP_POP);                              // [vala]
+        } else if (match(TOKEN_DEFAULT)) {                 // [vala]
+            if (breakCount == MAX_CASES) {
+                error("maximum case statements exceeded");
+                breakCount = 0;
+            }
+            seenDefault = 1;
+            consume(TOKEN_COLON, "Expect ':' afer 'default'");
+            caseStatements();                              // [vala]
+        } else {
+            errorAtCurrent("Expect 'case' or 'default' in switch statement body");
+        }
+    }
+
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after switch statement body");
+
+    for (int i = 0; i < breakCount; i++) {
+        patchJump(breaks[i]);
+    }
+
+    emitByte(OP_POP); // []
+}
+
 static void forStatement() {
     beginScope();
     consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'");
@@ -900,6 +970,7 @@ static void synchronize() {
         if (parser.previous.type == TOKEN_SEMICOLON) return;
 
         switch (parser.current.type) {
+            case TOKEN_SWITCH:
             case TOKEN_CLASS:
             case TOKEN_FUN:
             case TOKEN_VAR:
@@ -935,6 +1006,8 @@ static void declaration() {
 static void statement() {
     if (match(TOKEN_PRINT)) {
         printStatement();
+    } else if (match(TOKEN_SWITCH)) {
+        switchStatement();
     } else if (match(TOKEN_FOR)) {
         forStatement();
     } else if (match(TOKEN_IF)) {
