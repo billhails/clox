@@ -5,6 +5,6 @@ from his excellent book [Crafing Interpreters](http://craftinginterpreters.com/)
 
 There's nothing much in here that isn't in the book, though I have added a `do`/`while` loop, a `switch` statement and
 operators for `cons` (infix `@`, right-associative), `car` (prefix `<`), `cdr` (prefix `>`) and `append` (infix `@@`, right-associative),
-along with a list syntax i.e. `[1, 2, 3]`.
+along with a list syntax sugaring i.e. `[1, 2, 3]`.
 
 Quite fortuitously and neatly, those prefix operators compose, so `caddr` is `<>>`, `cadar` is `<><` etc.
