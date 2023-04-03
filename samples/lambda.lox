@@ -10,6 +10,30 @@ fun If(q, x, y) {
     return q(x, y);
 }
 
+fun Not(a) {
+    return a(False, True);
+}
+
+fun Or(a, b) {
+    return a(True, b);
+}
+
+fun And(a, b) {
+    return a(b, False);
+}
+
+fun Nand(a, b) {
+    return a(Not(b), b);
+}
+
+fun Eq(a, b) {
+    return Or(And(a, b), Not(Or(a, b)));
+}
+
+fun Xor(a, b) {
+    return Not(Eq(a, b));
+}
+
 fun cons(a, b) {
     fun f(q) {
         return If(q, a, b);
