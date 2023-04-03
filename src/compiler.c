@@ -260,6 +260,7 @@ static void statement();
 static void declaration();
 static ParseRule *getRule(TokenType type);
 static void parsePrecedence(Precedence precedence);
+static void function(FunctionType type);
 
 static uint8_t identifierConstant(Token *name) {
     return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
@@ -577,6 +578,11 @@ static void list(bool canAssign) {
     }
 }
 
+static void funExpr(bool canAssign) {
+    markInitialized();
+    function(TYPE_FUNCTION);
+}
+
 ParseRule rules[] = {
     [TOKEN_LEFT_PAREN]      = {grouping,    call,   PREC_CALL},
     [TOKEN_RIGHT_PAREN]     = {NULL,        NULL,   PREC_NONE},
@@ -613,7 +619,7 @@ ParseRule rules[] = {
     [TOKEN_ELSE]		    = {NULL,        NULL,   PREC_NONE},
     [TOKEN_FALSE]		    = {literal,     NULL,   PREC_NONE},
     [TOKEN_FOR]		        = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_FUN]		        = {NULL,        NULL,   PREC_NONE},
+    [TOKEN_FUN]		        = {funExpr,     NULL,   PREC_NONE},
     [TOKEN_IF]		        = {NULL,        NULL,   PREC_NONE},
     [TOKEN_NIL]		        = {literal,     NULL,   PREC_NONE},
     [TOKEN_OR]		        = {NULL,        or_,    PREC_OR},

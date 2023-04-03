@@ -6,10 +6,9 @@ fun map(fn, lst) {
 }
 
 fun timesBy(x) {
-    fun other(y) {
+    return fun (y) {
         return x * y;
-    }
-    return other;
+    };
 }
 
 print map(timesBy(2), [1, 2, 3, 4]);
