@@ -1,0 +1,19 @@
+var data = [
+    [],
+    1 @ 2,
+    fun () {},
+    1,
+    "hello",
+    true
+];
+
+fun foreach(list, fn) {
+    if (list == nil) return;
+    fn(<list);
+    foreach(>list, fn);
+}
+
+foreach(data, fun (datum) {
+    print datum;
+    print "   " + typeof(datum);
+});

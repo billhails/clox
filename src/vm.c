@@ -12,8 +12,50 @@
 
 VM vm;
 
-static Value clockNative(int argCount, Value* args) {
+static Value clockNative(int argCount, Value *args) {
     return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+
+static Value typeOfNative(int argCount, Value *args) {
+    if (argCount > 0) {
+        Value val = args[0];
+        if (IS_BOOL(val)) {
+            return OBJ_VAL(copyString("bool", 4));
+        }
+        if (IS_NIL(val)) {
+            return OBJ_VAL(copyString("nil", 3));
+        }
+        if (IS_NUMBER(val)) {
+            return OBJ_VAL(copyString("number", 6));
+        }
+        if (IS_OBJ(val)) {
+            if(IS_BOUND_METHOD(val)) {
+                return OBJ_VAL(copyString("function", 8));
+            }
+            if(IS_CLASS(val)) {
+                return OBJ_VAL(copyString("class", 5));
+            }
+            if(IS_CLOSURE(val)) {
+                return OBJ_VAL(copyString("function", 8));
+            }
+            if(IS_FUNCTION(val)) {
+                return OBJ_VAL(copyString("function", 8));
+            }
+            if(IS_INSTANCE(val)) {
+                return OBJ_VAL(copyString("function", 8));
+            }
+            if(IS_NATIVE(val)) {
+                return OBJ_VAL(copyString("function", 8));
+            }
+            if(IS_STRING(val)) {
+                return OBJ_VAL(copyString("string", 6));
+            }
+            if(IS_CONS(val)) {
+                return OBJ_VAL(copyString("cons", 4));
+            }
+        }
+    }
+    return OBJ_VAL(copyString("?", 1));
 }
 
 static void resetStack() {
@@ -64,6 +106,7 @@ void initVM() {
     vm.initString = NULL; // GC
     vm.initString = copyString("init", 4);
     defineNative("clock", clockNative);
+    defineNative("typeof", typeOfNative);
 }
 
 void freeVM() {
