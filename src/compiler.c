@@ -195,6 +195,17 @@ static void patchJump(int offset) {
     currentChunk()->code[offset + 1] = jump & 0xff;
 }
 
+static void patchJumpTo(int offset, int count) {
+    int jump = count - offset - 2;
+
+    if (jump > UINT16_MAX) {
+        error("Too much code to jump over");
+    }
+
+    currentChunk()->code[offset] = (jump >> 8) & 0xff;
+    currentChunk()->code[offset + 1] = jump & 0xff;
+}
+
 static void initCompiler(Compiler *compiler, FunctionType type) {
     compiler->enclosing = current;
     compiler->function = NULL;
@@ -790,57 +801,90 @@ static void expressionStatement() {
     emitByte(OP_POP);
 }
 
-static void caseStatements() {
+static int caseStatements() {
+    int start = currentChunk()->count;
+    int count = 0;
     beginScope();
     while(   !check(TOKEN_RIGHT_BRACE)
           && !check(TOKEN_EOF)
           && !check(TOKEN_CASE)
           && !check(TOKEN_DEFAULT)) {
         statement();
+        count++;
     }
     endScope();
+    return count ? start : 0;
 }
 
+
+/*
+ * semantics:
+ *
+ * switch (1) {
+ *     case 1:          // implicit fall-through
+ *     case 2:
+ *         statements   // implicit break
+ *     case 3:          // implicit fall-through
+ *     default:
+ *         statements
+ * }
+ */
 static void switchStatement() {
-    printf("switchStatement\n");
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'switch'");
-    expression();                                          // [vala]
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after <expression>");
-    consume(TOKEN_LEFT_BRACE, "Expect '{' before switch statement body");
+#define CHECK_MAX_CASES() \
+    do { \
+        if (breakCount == MAX_CASES) { \
+            error("maximum switch cases exceeded"); \
+            breakCount = contCount = 0; \
+        } \
+    } while(0)
+#define PATCH_CONTS_TO_STATEMENTS(s) \
+    do { \
+        while (contCount > 0) { \
+            patchJumpTo(conts[--contCount], s); \
+        } \
+    } while(0)
 
     int seenDefault = 0;
     int breaks[MAX_CASES];
     int breakCount = 0;
-    int nextCase = -1;
+    int conts[MAX_CASES];
+    int contCount = 0;
+
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'switch'");
+    expression();                                          // [vala]
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after <expression>");
+    consume(TOKEN_LEFT_BRACE, "Expect '{' before switch statement body");
 
     while(!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
         if (seenDefault) {
             errorAtCurrent("'default' must be the last case in a switch statement");
         }
         if (match(TOKEN_CASE)) {                           // [vala]
-            if (breakCount == MAX_CASES) {
-                error("maximum switch cases exceeded");
-                breakCount = 0;
-            }
+            CHECK_MAX_CASES();
             emitByte(OP_DUP);                              // [vala vala]
             expression();                                  // [vala vala valb]
             consume(TOKEN_COLON, "Expect ':' afer 'case' <expression>");
             emitByte(OP_EQUAL);                            // [vala bool]
-            nextCase = emitJump(OP_JUMP_IF_FALSE);         // [vala bool] -> nextCase
+            int nextCase = emitJump(OP_JUMP_IF_FALSE);     // [vala bool] -> nextCase
             emitByte(OP_POP);                              // [vala]
-            caseStatements();                              // [vala]
-            breaks[breakCount++] = emitJump(OP_JUMP);      // [vala]      -> break
+            int statements = caseStatements();             // [vala]      <- continue
+            if (statements) {
+                PATCH_CONTS_TO_STATEMENTS(statements);     // [vala]
+                breaks[breakCount++] = emitJump(OP_JUMP);  // [vala]      -> break
+            } else {
+                conts[contCount++] = emitJump(OP_JUMP);    // [vala]      -> continue
+            }
             patchJump(nextCase);                           // [vala bool] <- nextCase
             emitByte(OP_POP);                              // [vala]
 
         } else if (match(TOKEN_DEFAULT)) {                 // [vala]
-            if (breakCount == MAX_CASES) {
-                error("maximum case statements exceeded");
-                breakCount = 0;
-            }
+            CHECK_MAX_CASES();
             seenDefault = 1;
             consume(TOKEN_COLON, "Expect ':' afer 'default'");
-            caseStatements();                              // [vala]
+            int statements = caseStatements();             // [vala]      <- continue
+            if (statements) {
+                PATCH_CONTS_TO_STATEMENTS(statements);     // [vala]
+            }
         } else {
             errorAtCurrent("Expect 'case' or 'default' in switch statement body");
         }
@@ -851,8 +895,13 @@ static void switchStatement() {
     for (int i = 0; i < breakCount; i++) {
         patchJump(breaks[i]);                              // [vala]     <- break
     }
+    for (int i = 0; i < contCount; i++) {
+        patchJump(conts[i]);                               // [vala]     <- continue
+    }
 
     emitByte(OP_POP);                                      // []
+#undef CHECK_MAX_CASES
+#undef PATCH_CONTS_TO_STATEMENTS
 }
 
 static void forStatement() {

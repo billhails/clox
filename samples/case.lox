@@ -1,9 +1,18 @@
-switch (3) {
-    case 1:
-        print "found it";
-        print "found it";
-    case 2:
-        print "2?";
+switch ("test 1") {
+    case "a":
+    case "b":
+        print 1;
+    case "c":
+        print 2;
+    case "d":
     default:
-        print "hit default";
+        print "default";
 }
+
+
+switch ("test 2") {
+    case "a":
+    case "b":
+}
+
+
