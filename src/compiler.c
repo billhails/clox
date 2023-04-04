@@ -23,11 +23,11 @@ typedef struct {
 typedef enum {
     PREC_NONE,
     PREC_ASSIGNMENT,
-    PREC_CONS,
     PREC_OR,
     PREC_AND,
     PREC_EQUALITY,
     PREC_COMPARISON,
+    PREC_CONS,
     PREC_TERM,
     PREC_FACTOR,
     PREC_UNARY,
@@ -845,9 +845,9 @@ static void switchStatement() {
     } while(0)
 
     int seenDefault = 0;
-    int breaks[MAX_CASES];
+    int breaks[MAX_CASES]; // max 256 cases with statements (jumps to end)
     int breakCount = 0;
-    int conts[MAX_CASES];
+    int conts[MAX_CASES]; // max 256 consecutive cases with no statements (jumps to next statement)
     int contCount = 0;
 
     consume(TOKEN_LEFT_PAREN, "Expect '(' after 'switch'");
@@ -859,6 +859,7 @@ static void switchStatement() {
         if (seenDefault) {
             errorAtCurrent("'default' must be the last case in a switch statement");
         }
+
         if (match(TOKEN_CASE)) {                           // [vala]
             CHECK_MAX_CASES();
             emitByte(OP_DUP);                              // [vala vala]
@@ -876,7 +877,6 @@ static void switchStatement() {
             }
             patchJump(nextCase);                           // [vala bool] <- nextCase
             emitByte(OP_POP);                              // [vala]
-
         } else if (match(TOKEN_DEFAULT)) {                 // [vala]
             CHECK_MAX_CASES();
             seenDefault = 1;
@@ -892,11 +892,11 @@ static void switchStatement() {
 
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after switch statement body");
 
-    for (int i = 0; i < breakCount; i++) {
-        patchJump(breaks[i]);                              // [vala]     <- break
+    while (breakCount > 0) {
+        patchJump(breaks[--breakCount]);                   // [vala]     <- break
     }
-    for (int i = 0; i < contCount; i++) {
-        patchJump(conts[i]);                               // [vala]     <- continue
+    while (contCount > 0) {
+        patchJump(conts[--contCount]);                     // [vala]     <- continue
     }
 
     emitByte(OP_POP);                                      // []

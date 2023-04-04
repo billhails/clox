@@ -1,0 +1,11 @@
+fun eq(a, b) {
+    if (typeof(a) == "cons" and typeof(b) == "cons")
+        return eq(<a, <b) and eq(>a, >b);
+    return a == b;
+}
+
+print 1 @ 2 == 1 @ 2;
+print eq(1 @ 2, 1 @ 2);
+print [1, 2] == [1, 2];
+print eq([1, 2], [1, 2]);
+print eq([1, 2], [1, 3]);
