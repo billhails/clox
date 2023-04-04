@@ -832,8 +832,8 @@ static int caseStatements() {
 static void switchStatement() {
 #define CHECK_MAX_CASES() \
     do { \
-        if (breakCount == MAX_CASES) { \
-            error("maximum switch cases exceeded"); \
+        if (breakCount == MAX_CASES || contCount == MAX_CASES) { \
+            error("Maximum switch cases exceeded"); \
             breakCount = contCount = 0; \
         } \
     } while(0)
