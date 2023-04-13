@@ -4,7 +4,9 @@
 /* concrete syntax tree (mirrors the language directly) */
 
 #include <stdbool.h>
+#include <stdlib.h>
 
+#include "common.h"
 #include "scanner.h"
 
 typedef enum {
@@ -15,7 +17,7 @@ typedef enum {
 } CstDeclarationType;
 
 typedef union {
-    struct CstClassDeclaration *ClassDeclaration;
+    struct CstClassDeclaration *classDeclaration;
     struct CstFunDeclaration *funDeclaration;
     struct CstVarDeclaration *varDeclaration;
     struct CstStatement *statement;
@@ -36,7 +38,6 @@ typedef struct CstClassDeclaration {
 
 typedef struct CstMethodList {
     Token name;
-    bool isInit;
     struct CstFunction *function;
     struct CstMethodList *next;
 } CstMethodList;
@@ -76,7 +77,8 @@ typedef enum {
 typedef union {
     struct CstSwitchStatement *switchStatement;
     struct CstForStatement *forStatement;
-    // if, while and do are all conditional statements
+    struct CstIfStatement *ifStatement;
+    // while and do are all conditional statements
     struct CstConditionalStatement *conditionalStatement;
     struct CstDeclarationList *blockStatement;
     // expression, print and return are just expressions
@@ -96,7 +98,7 @@ typedef struct CstSwitchStatement {
 typedef struct CstCaseList {
     bool isDefault;
     struct CstExpression *expression;
-    struct CstStatement *statement;
+    struct CstDeclarationList *declarations;
     struct CstCaseList *next;
 } CstCaseList;
 
@@ -113,32 +115,41 @@ typedef struct CstForStatement {
     struct CstStatement *body;
 } CstForStatement;
 
+typedef struct CstIfStatement {
+    struct CstExpression *expression;
+    struct CstStatement *ifTrue;
+    struct CstStatement *ifFalse;
+} CstIfStatement;
+
 typedef struct CstConditionalStatement {
     struct CstExpression *expression;
     struct CstStatement *statement;
 } CstConditionalStatement;
 
 typedef enum {
-    CST_CALL_EXPR,
-    CST_DOT_EXPR,
-    CST_NEGATION_EXPR,
-    CST_SUBTRACTION_EXPR,
-    CST_ADDITION_EXPR,
-    CST_DIVISION_EXPR,
-    CST_MULTIPLICATION_EXPR,
+    CST_CALL_EXPR, // call
+    CST_INVOKE_EXPR, // call
+    CST_DOT_EXPR, // binary
+    CST_NEGATION_EXPR, // unary
+    CST_SUBTRACTION_EXPR, // binary
+    CST_ADDITION_EXPR, // binary
+    CST_DIVISION_EXPR, // binary
+    CST_MULTIPLICATION_EXPR, // binary
     CST_LIST_EXPR,
-    CST_CONS_EXPR,
-    CST_APPEND_EXPR,
+    CST_CONS_EXPR, // binary
+    CST_APPEND_EXPR, // binary
     CST_NOT_EXPR,
-    CST_NE_EXPR,
-    CST_EQ_EXPR,
+    CST_NE_EXPR, // binary
+    CST_EQ_EXPR, // binary
     CST_CDR_EXPR,
-    CST_GT_EXPR,
-    CST_GE_EXPR,
+    CST_GT_EXPR, // binary
+    CST_GE_EXPR, // binary
     CST_CAR_EXPR,
-    CST_LT_EXPR,
-    CST_LE_EXPR,
-    CST_VARIABLE_EXPR,
+    CST_LT_EXPR, // binary
+    CST_LE_EXPR, // binary
+    CST_VAR_EXPR,
+    CST_ASSIGN_EXPR,
+    CST_SETPROP_EXPR,
     CST_STRING_EXPR,
     CST_NUMBER_EXPR,
     CST_AND_EXPR,
@@ -146,7 +157,8 @@ typedef enum {
     CST_FUN_EXPR,
     CST_NIL_EXPR,
     CST_OR_EXPR,
-    CST_SUPER_EXPR,
+    CST_SUPER_GET_EXPR,
+    CST_SUPER_INVOKE_EXPR,
     CST_THIS_EXPR,
     CST_TRUE_EXPR
 } CstExpressionType;
@@ -156,8 +168,18 @@ typedef union {
     struct CstBinaryExpression *binary;
     struct CstExpression *unary;
     struct CstStringExpression *string; // also var
+    struct CstFunction *function;
     double value;
 } CstExpressionValue;
+
+#define CST_CALL_FIELD(expression) ((CstExpressionValue){.call = expression})
+#define CST_BINARY_FIELD(expression) ((CstExpressionValue){.binary = expression})
+#define CST_UNARY_FIELD(expression) ((CstExpressionValue){.unary = expression})
+#define CST_STRING_FIELD(expression) ((CstExpressionValue){.string = expression})
+#define CST_FUNCTION_FIELD(expression) ((CstExpressionValue){.function = expression})
+#define CST_NUMBER_FIELD(expression) ((CstExpressionValue){.value = expression})
+
+#define CST_NO_FIELD ((CstExpressionValue){.unary = NULL})
 
 typedef struct CstExpression {
     CstExpressionType type;
@@ -183,6 +205,9 @@ typedef struct CstStringExpression {
     Token value;
 } CstStringExpression;
 
+
+
+
 CstDeclarationList *newCstDeclarationList(
     CstDeclarationType type,
     CstDeclarationValue declaration,
@@ -198,7 +223,6 @@ CstClassDeclaration *newCstClassDeclaration(
 
 CstMethodList *newCstMethodList(
     Token name,
-    bool isInit,
     CstFunction *function,
     CstMethodList *next
 );
@@ -230,7 +254,7 @@ CstSwitchStatement *newCstSwitchStatement(
 CstCaseList *newCstCaseList(
     bool isDefault,
     CstExpression *expression,
-    CstStatement *statement,
+    CstDeclarationList *declarations,
     CstCaseList *next
 );
 
@@ -240,6 +264,12 @@ CstForStatement *newCstForStatement(
     CstExpression *test,
     CstExpression *update,
     CstStatement *body
+);
+
+CstIfStatement *newCstIfStatement(
+    CstExpression *expression,
+    CstStatement *ifTrue,
+    CstStatement *ifFalse
 );
 
 CstConditionalStatement *newCstConditionalStatement(
@@ -268,5 +298,47 @@ CstExpressionList *newCstExpressionList(
 );
 
 CstStringExpression *newCstStringExpression(Token value);
+
+
+#ifdef DEBUG_PRINT_TREE
+
+
+void printCstDeclarationList(CstDeclarationList *cst, int depth);
+
+void printCstClassDeclaration(CstClassDeclaration *cst, int depth);
+
+void printCstMethodList(CstMethodList *cst, int depth);
+
+void printCstFunction(CstFunction *cst, int depth);
+
+void printCstArgumentList(CstArgumentList *cst, int depth);
+
+void printCstFunDeclaration(CstFunDeclaration *cst, int depth);
+
+void printCstVarDeclaration(CstVarDeclaration *cst, int depth);
+
+void printCstStatement(CstStatement *cst, int depth);
+
+void printCstSwitchStatement(CstSwitchStatement *cst, int depth);
+
+void printCstCaseList(CstCaseList *cst, int depth);
+
+void printCstForStatement(CstForStatement *cst, int depth);
+
+void printCstIfStatement(CstIfStatement *cst, int depth);
+
+void printCstConditionalStatement(CstConditionalStatement *cst, int depth);
+
+void printCstExpression(CstExpression *cst, int depth);
+
+void printCstBinaryExpression(CstBinaryExpression *cst, int depth);
+
+void printCstCallExpression(CstCallExpression *cst, int depth);
+
+void printCstExpressionList(CstExpressionList *cst, int depth);
+
+void printCstStringExpression(CstStringExpression *cst, int depth);
+
+#endif
 
 #endif

@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "compiler.h"
+#include "parser.h"
 #include "memory.h"
 #include "scanner.h"
 
@@ -76,7 +77,7 @@ typedef struct ClassCompiler {
     bool hasSuperclass;
 } ClassCompiler;
 
-Parser parser;
+static Parser parser;
 Compiler *current = NULL;
 ClassCompiler *currentClass = NULL;
 
@@ -1085,6 +1086,13 @@ static void statement() {
 }
 
 ObjFunction *compile(const char *source) {
+    CstDeclarationList *tree = parse(source);
+#ifdef DEBUG_PRINT_TREE
+    if (tree != NULL) {
+        printCstDeclarationList(tree, 0);
+        printf("\n");
+    }
+#endif
     initScanner(source);
     Compiler compiler;
     initCompiler(&compiler, TYPE_SCRIPT);

@@ -2,6 +2,8 @@
 #define clox_scanner_h
 
 typedef enum {
+    TOKEN_NONE,
+
     TOKEN_LEFT_PAREN, TOKEN_RIGHT_PAREN,
     TOKEN_LEFT_BRACE, TOKEN_RIGHT_BRACE,
     TOKEN_COMMA, TOKEN_DOT, TOKEN_MINUS, TOKEN_PLUS,
@@ -33,6 +35,8 @@ typedef struct {
     int length;
     int line;
 } Token;
+
+extern Token emptyToken;
 
 void initScanner(const char *source);
 Token scanToken();

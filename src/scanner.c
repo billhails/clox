@@ -58,6 +58,8 @@ const char *tokenName[] = {
 };
 #endif
 
+Token emptyToken;
+
 typedef struct {
     const char *start;
     const char *current;
@@ -67,6 +69,11 @@ typedef struct {
 Scanner scanner;
 
 void initScanner(const char *source) {
+    emptyToken.type = TOKEN_NONE;
+    emptyToken.start = NULL;
+    emptyToken.length = 0;
+    emptyToken.line = 0;
+
     scanner.start = source;
     scanner.current = source;
     scanner.line = 1;
