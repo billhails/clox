@@ -1,0 +1,14 @@
+fun first() {
+    var a = 1;
+    second();
+    var b = 2;
+    second();
+    print a + b;
+}
+
+fun second() {
+    var c = 3;
+    print c;
+}
+
+first();

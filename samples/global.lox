@@ -1,0 +1,7 @@
+fun printGlobal() {
+    print global;
+}
+
+var global = "after";
+
+printGlobal();

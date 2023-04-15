@@ -1,10 +1,13 @@
 .PHONY: all clean deps profile
 
+# in Ubuntu 22.10
+# `ulimit -c unlimited` to turn on core dumps
+# written to /var/lib/apport/coredump/
 PROFILING=-pg
 OPTIMIZING=-O2
 DEBUGGING=-g
 
-CC=cc $(OPTIMIZING)
+CC=cc $(DEBUGGING)
 
 CFILES=$(wildcard src/*.c)
 

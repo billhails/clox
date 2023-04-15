@@ -111,6 +111,8 @@ void blackenObject(Obj *object) {
         case OBJ_NATIVE:
         case OBJ_STRING:
             break;
+        default:
+            cant_happen("unrecognised object type (blackenObject)");
     }
 }
 
@@ -167,6 +169,8 @@ static void freeObject(Obj *object) {
             FREE(ObjCons, object);
             break;
         }
+        default:
+            cant_happen("unrecognised object type (freeObject)");
     }
 }
 

@@ -26,4 +26,5 @@ while (sum < 1000000) {
               + zoo.grass()
               + zoo.mouse();
 }
+print sum;
 print clock() - start;

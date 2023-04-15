@@ -1,3 +1,6 @@
+#ifdef DEBUG_DUMP_CORE
+#include <signal.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,15 +14,6 @@
 #ifdef DEBUG_PRINT_CODE
 #include "debug.h"
 #endif
-
-#define MAX_CASES 256
-
-typedef struct {
-    Token current;
-    Token previous;
-    bool hadError;
-    bool panicMode;
-} Parser;
 
 typedef enum {
     PREC_NONE,
@@ -77,69 +71,52 @@ typedef struct ClassCompiler {
     bool hasSuperclass;
 } ClassCompiler;
 
-static Parser parser;
 Compiler *current = NULL;
 ClassCompiler *currentClass = NULL;
+
+static bool hadError;
+static int line;
+
+#define LINE(CST) (line = CST->line)
 
 static Chunk *currentChunk() {
     return &current->function->chunk;
 }
 
 static void errorAt(Token *token, const char *message) {
-    if (parser.panicMode) return;
-    parser.panicMode = true;
-    fprintf(stderr, "[line %d] Error", token->line);
+    if (token != NULL) {
+        fprintf(stderr, "[line %d] Error", token->line);
 
-    if (token->type == TOKEN_EOF) {
-        fprintf(stderr, " at end");
-    } else if (token->type == TOKEN_ERROR) {
+        if (token->type == TOKEN_EOF) {
+            fprintf(stderr, " at end");
+        } else if (token->type == TOKEN_ERROR) {
+        } else {
+            fprintf(stderr, " at '%.*s'", token->length, token->start);
+        }
     } else {
-        fprintf(stderr, " at '%.*s'", token->length, token->start);
+        fprintf(stderr, "[line %d] Error", line);
     }
-
     fprintf(stderr, ": %s\n", message);
-    parser.hadError = true;
+    hadError = true;
 }
 
-static void error(const char *message) {
-    errorAt(&parser.previous, message);
+static void error(const char *message, Token *name) {
+    errorAt(name, message);
 }
 
-static void errorAtCurrent(const char *message) {
-    errorAt(&parser.current, message);
-}
-
-static void advance() {
-    parser.previous = parser.current;
-
-    for (;;) {
-        parser.current = scanToken();
-        if (parser.current.type != TOKEN_ERROR) break;
-        errorAtCurrent(parser.current.start);
-    }
-}
-
-static void consume(TokenType type, const char *message) {
-    if (parser.current.type == type) {
-        advance();
-        return;
-    }
-
-    errorAtCurrent(message);
-}
-
-static bool check(TokenType type) {
-    return parser.current.type == type;
-}
-
-static bool match(TokenType type) {
-    if (!check(type)) return false;
-    advance();
-    return true;
+void cant_happen(const char *message) {
+    char buffer[256];
+    snprintf(buffer, (size_t)256, "INTERNAL ERROR: %s\n", message);
+    errorAt(NULL, buffer);
+#ifdef DUMP_CORE
+    raise(SIGABRT);
+#else
+    exit(1);
+#endif
 }
 
 static void emitByte(uint8_t byte) {
-    writeChunk(currentChunk(), byte, parser.previous.line);
+    writeChunk(currentChunk(), byte, line);
 }
 
 static void emitBytes(uint8_t byte1, uint8_t byte2) {
@@ -150,7 +127,7 @@ static void emitBytes(uint8_t byte1, uint8_t byte2) {
 static void emitLoop(int loopStart) {
     emitByte(OP_LOOP);
     int offset = currentChunk()->count - loopStart + 2;
-    if (offset > UINT16_MAX) error("Loop body too large");
+    if (offset > UINT16_MAX) error("Loop body too large", NULL);
     emitByte((offset >> 8) & 0xff);
     emitByte(offset & 0xff);
 }
@@ -174,7 +151,7 @@ static void emitReturn() {
 static uint8_t makeConstant(Value value) {
     int constant = addConstant(currentChunk(), value);
     if (constant > UINT8_MAX) {
-        error("Too many constants in one chunk");
+        error("Too many constants in one chunk", NULL);
         return 0;
     }
 
@@ -189,7 +166,7 @@ static void patchJump(int offset) {
     int jump = currentChunk()->count - offset - 2;
 
     if (jump > UINT16_MAX) {
-        error("Too much code to jump over");
+        error("Too much code to jump over", NULL);
     }
 
     currentChunk()->code[offset] = (jump >> 8) & 0xff;
@@ -200,14 +177,14 @@ static void patchJumpTo(int offset, int count) {
     int jump = count - offset - 2;
 
     if (jump > UINT16_MAX) {
-        error("Too much code to jump over");
+        error("Too much code to jump over", NULL);
     }
 
     currentChunk()->code[offset] = (jump >> 8) & 0xff;
     currentChunk()->code[offset + 1] = jump & 0xff;
 }
 
-static void initCompiler(Compiler *compiler, FunctionType type) {
+static void initCompiler(Compiler *compiler, FunctionType type, Token *name) {
     compiler->enclosing = current;
     compiler->function = NULL;
     compiler->type = type;
@@ -217,8 +194,7 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
     current = compiler;
 
     if (type != TYPE_SCRIPT) {
-        current->function->name = copyString(parser.previous.start,
-                                             parser.previous.length);
+        current->function->name = copyString(name->start, name->length);
     }
 
     Local *local = &current->locals[current->localCount++];
@@ -237,7 +213,7 @@ static ObjFunction *endCompiler() {
     emitReturn();
     ObjFunction *function = current->function;
 #ifdef DEBUG_PRINT_CODE
-    if (!parser.hadError) {
+    if (!hadError) {
         disassembleChunk(currentChunk(),
                          function->name != NULL ?
                          function->name->chars :
@@ -267,12 +243,12 @@ static void endScope() {
     }
 }
 
-static void expression();
-static void statement();
-static void declaration();
+static void expression(CstExpression *cst);
+static void statement(CstStatement *cst);
+static void declaration(CstDeclarationList *cst);
 static ParseRule *getRule(TokenType type);
 static void parsePrecedence(Precedence precedence);
-static void function(FunctionType type);
+static void function(CstFunction *cst, FunctionType type, Token name);
 
 static uint8_t identifierConstant(Token *name) {
     return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
@@ -288,7 +264,7 @@ static int resolveLocal(Compiler *compiler, Token *name) {
         Local *local = &compiler->locals[i];
         if (identifiersEqual(name, &local->name)) {
             if (local->depth == -1) {
-                error("Can't read local variable in its own initializer");
+                error("Can't read local variable in its own initializer", name);
             }
             return i;
         }
@@ -308,7 +284,7 @@ static int addUpvalue(Compiler *compiler, uint8_t index, bool isLocal) {
     }
 
     if (upvalueCount == UINT8_COUNT) {
-        error("Too many closure variables in function");
+        error("Too many closure variables in function", NULL);
         return 0;
     }
 
@@ -338,7 +314,7 @@ static int resolveUpvalue(Compiler *compiler, Token *name) {
 
 static void addLocal(Token name) {
     if (current->localCount == UINT8_COUNT) {
-        error("Too many local variables in function");
+        error("Too many local variables in function", &name);
         return;
     }
 
@@ -348,10 +324,8 @@ static void addLocal(Token name) {
     local->isCaptured = false;
 }
 
-static void declareVariable() {
+static void declareVariable(Token *name) {
     if (current->scopeDepth == 0) return;
-
-    Token *name = &parser.previous;
 
     for (int i = current->localCount - 1; i >= 0; i--) {
         Local *local = &current->locals[i];
@@ -360,20 +334,19 @@ static void declareVariable() {
         }
 
         if (identifiersEqual(name, &local->name)) {
-            error("Already a variable with this name in this scope");
+            error("Already a variable with this name in this scope", name);
         }
     }
 
     addLocal(*name);
 }
 
-static uint8_t parseVariable(const char *errorMessage) {
-    consume(TOKEN_IDENTIFIER, errorMessage);
+static uint8_t parseVariable(Token name) {
+    declareVariable(&name);
 
-    declareVariable();
     if (current->scopeDepth > 0) return 0;
 
-    return identifierConstant(&parser.previous);
+    return identifierConstant(&name);
 }
 
 static void markInitialized() {
@@ -390,72 +363,55 @@ static void defineVariable(uint8_t global) {
     emitBytes(OP_DEFINE_GLOBAL, global);
 }
 
-static uint8_t argumentList() {
-    uint8_t argCount = 0;
-    if (!check(TOKEN_RIGHT_PAREN)) {
-        do {
-            expression();
-            if (argCount == 255) {
-                error("Can't have more than 255 arguments");
-            }
-            argCount++;
-        } while (match(TOKEN_COMMA));
-    }
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after <argument-list>");
-    return argCount;
+static uint8_t argumentList(CstExpressionList *cst) {
+    if (cst == NULL) return (uint8_t)0;
+    LINE(cst);
+    expression(cst->expression);
+    return (uint8_t)(1 + argumentList(cst->next));
 }
 
-static void and_(bool canAssign) {
+static void and_(CstBinaryExpression *cst) {
+    if (cst == NULL) cant_happen("null CstBinaryExpression (and_)");
+    LINE(cst);
+
+    expression(cst->left);
     int endJump = emitJump(OP_JUMP_IF_FALSE);
     emitByte(OP_POP);
-    parsePrecedence(PREC_AND);
+    expression(cst->right);
     patchJump(endJump);
 }
 
-static void binary(bool canAssign) {
-    TokenType operatorType = parser.previous.type;
-    ParseRule *rule = getRule(operatorType);
-    parsePrecedence((Precedence)(rule->precedence + 1));
-    switch (operatorType) {
-        case TOKEN_BANG_EQUAL:    emitBytes(OP_EQUAL, OP_NOT);   break;
-        case TOKEN_EQUAL_EQUAL:   emitByte(OP_EQUAL);            break;
-        case TOKEN_GREATER:       emitByte(OP_GREATER);          break;
-        case TOKEN_GREATER_EQUAL: emitBytes(OP_LESS, OP_NOT);    break;
-        case TOKEN_LESS:          emitByte(OP_LESS);             break;
-        case TOKEN_LESS_EQUAL:    emitBytes(OP_GREATER, OP_NOT); break;
-        case TOKEN_PLUS:          emitByte(OP_ADD);              break;
-        case TOKEN_MINUS:         emitByte(OP_SUBTRACT);         break;
-        case TOKEN_STAR:          emitByte(OP_MULTIPLY);         break;
-        case TOKEN_SLASH:         emitByte(OP_DIVIDE);           break;
-        default:                  return;
-    }
+static void binary(CstBinaryExpression *cst, OpCode op) {
+    if (cst == NULL) cant_happen("null CstBinaryExpression (binary)");
+    LINE(cst);
+
+    expression(cst->left);
+    expression(cst->right);
+    emitByte(op);
 }
 
-static void right(bool canAssign) {
-    TokenType operatorType = parser.previous.type;
-    ParseRule *rule = getRule(operatorType);
-    parsePrecedence(rule->precedence);
-    switch (operatorType) {
-        case TOKEN_AT:    emitByte(OP_CONS);   break;
-        case TOKEN_AT_AT: emitByte(OP_APPEND); break;
-        default:          return;
-    }
-}
 
-static void call(bool canAssign) {
-    uint8_t argCount = argumentList();
+static void call(CstCallExpression *cst) {
+    if (cst == NULL) cant_happen("null CstCallExpression (call)");
+    LINE(cst);
+
+    expression(cst->function);
+    uint8_t argCount = argumentList(cst->arguments);
     emitBytes(OP_CALL, argCount);
 }
 
-static void dot(bool canAssign) {
-    consume(TOKEN_IDENTIFIER, "Expect property name after '.'");
-    uint8_t name = identifierConstant(&parser.previous);
+static void dot(CstDotExpression *cst) {
+    if (cst == NULL) cant_happen("null CstDotExpression (dot)");
+    LINE(cst);
 
-    if (canAssign && match(TOKEN_EQUAL)) {
-        expression();
+    expression(cst->left);
+    uint8_t name = identifierConstant(&cst->property);
+
+    if (cst->type == CST_DOT_ASSIGN) {
+        expression(cst->action.value);
         emitBytes(OP_SET_PROPERTY, name);
-    } else if (match(TOKEN_LEFT_PAREN)) {
-        uint8_t argCount = argumentList();
+    } else if (cst->type == CST_DOT_INVOKE) {
+        uint8_t argCount = argumentList(cst->action.arguments);
         emitBytes(OP_INVOKE, name);
         emitByte(argCount);
     } else {
@@ -463,39 +419,31 @@ static void dot(bool canAssign) {
     }
 }
 
-static void literal(bool canAssign) {
-    switch (parser.previous.type) {
-        case TOKEN_FALSE: emitByte(OP_FALSE); break;
-        case TOKEN_NIL:   emitByte(OP_NIL);   break;
-        case TOKEN_TRUE:  emitByte(OP_TRUE);  break;
-        default:          return;
-    }
-}
-
-static void grouping(bool canAssign) {
-    expression();
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after '(' <expression>");
-}
-
-static void number(bool canAssign) {
-    double value = strtod(parser.previous.start, NULL);
+static void number(double value) {
     emitConstant(NUMBER_VAL(value));
 }
 
-static void or_(bool canAssign) {
+static void or_(CstBinaryExpression *cst) {
+    if (cst == NULL) cant_happen("null CstStringExpression (string)");
+    LINE(cst);
+
+    expression(cst->left);
     int elseJump = emitJump(OP_JUMP_IF_FALSE);
     int endJump = emitJump(OP_JUMP);
     patchJump(elseJump);
     emitByte(OP_POP);
-    parsePrecedence(PREC_OR);
+    expression(cst->right);
     patchJump(endJump);
 }
 
-static void string(bool canAssign) {
-    emitConstant(OBJ_VAL(copyString(parser.previous.start + 1, parser.previous.length - 2)));
+static void string(CstStringExpression *cst) {
+    if (cst == NULL) cant_happen("null CstStringExpression (string)");
+    LINE(cst);
+
+    emitConstant(OBJ_VAL(copyString(cst->value.start + 1, cst->value.length - 2)));
 }
 
-static void namedVariable(Token name, bool canAssign) {
+static void namedVariable(Token name, CstExpression *cst) {
     uint8_t getOp, setOp;
     int arg = resolveLocal(current, &name);
     if (arg != -1) {
@@ -509,16 +457,22 @@ static void namedVariable(Token name, bool canAssign) {
         getOp = OP_GET_GLOBAL;
         setOp = OP_SET_GLOBAL;
     }
-    if (canAssign && match(TOKEN_EQUAL)) {
-        expression();
+    if (cst != NULL) {
+        expression(cst);
         emitBytes(setOp, (uint8_t)arg);
     } else {
         emitBytes(getOp, (uint8_t)arg);
     }
 }
 
-static void variable(bool canAssign) {
-    namedVariable(parser.previous, canAssign);
+static void variable(Token name) {
+    namedVariable(name, NULL);
+}
+
+static void assign(CstAssignExpression *cst) {
+    if (cst == NULL) cant_happen("null CstAssignExpression (assign)");
+    LINE(cst);
+    namedVariable(cst->variable, cst->value);
 }
 
 static Token syntheticToken(const char *text) {
@@ -528,183 +482,192 @@ static Token syntheticToken(const char *text) {
     return token;
 }
 
-static void super_(bool canAssign) {
+static void checkClass(CstStringExpression *cst) { // arg for token for line etc.
     if (currentClass == NULL) {
-        error("Can't use 'super' outside of a class");
+        error("Can't use 'super' outside of a class", &cst->value);
     } else if (!currentClass->hasSuperclass) {
-        error("Can't use 'super' in a class with no superclass");
+        error("Can't use 'super' in a class with no superclass", &cst->value);
     }
+}
 
-    consume(TOKEN_DOT, "Expect '.' after 'super'");
-    consume(TOKEN_IDENTIFIER, "Expect superclass method name");
-    uint8_t name = identifierConstant(&parser.previous);
-
+static void super_invoke(CstCallSuperExpression *cst) {
+    if (cst == NULL) cant_happen("null CstCallExpression (super_invoke)");
+    LINE(cst);
+    uint8_t name = identifierConstant(&cst->methodName);
     namedVariable(syntheticToken("this"), false);
-
-    if (match(TOKEN_LEFT_PAREN)) {
-        uint8_t argCount = argumentList();
-        namedVariable(syntheticToken("super"), false);
-        emitBytes(OP_SUPER_INVOKE, name);
-        emitByte(argCount);
-    } else {
-        namedVariable(syntheticToken("super"), false);
-        emitBytes(OP_GET_SUPER, name);
-    }
+    uint8_t argCount = argumentList(cst->arguments);
+    namedVariable(syntheticToken("super"), false);
+    emitBytes(OP_SUPER_INVOKE, name);
+    emitByte(argCount);
 }
 
-static void this_(bool canAssign) {
+static void super_get(CstStringExpression *cst) {
+    if (cst == NULL) cant_happen("null CstStringExpression (super_get)");
+    LINE(cst);
+    checkClass(cst);
+    uint8_t name = identifierConstant(&cst->value);
+    namedVariable(syntheticToken("this"), false);
+    namedVariable(syntheticToken("super"), false);
+    emitBytes(OP_GET_SUPER, name);
+}
+
+static void this_(CstStringExpression *cst) {
+    if (cst == NULL) cant_happen("null CstStringExpression (this_)");
+    LINE(cst);
     if (currentClass == NULL) {
-        error("Can't use 'this' outside of a class");
+        error("Can't use 'this' outside of a class", &cst->value);
         return;
     }
-    variable(false);
+    variable(cst->value);
 }
 
-static void unary(bool canAssign) {
-    TokenType operatorType = parser.previous.type;
-    parsePrecedence(PREC_UNARY);
-    switch (operatorType) {
-        case TOKEN_BANG:    emitByte(OP_NOT);    break;
-        case TOKEN_MINUS:   emitByte(OP_NEGATE); break;
-        case TOKEN_LESS:    emitByte(OP_CAR);    break;
-        case TOKEN_GREATER: emitByte(OP_CDR);    break;
-        default: return;
-    }
+static void unary(CstExpression *cst, OpCode op) {
+    if (cst == NULL) cant_happen("null CstExpression (unary)");
+    LINE(cst);
+    expression(cst);
+    emitByte(op);
 }
 
-static void list(bool canAssign) {
-    int count = 0;
-    while (!check(TOKEN_RIGHT_SQUARE) && !check(TOKEN_EOF)) {
-        expression();
-        count++;
-        if (!match(TOKEN_COMMA)) {
-            break;
-        }
-    }
+static void funExpr(CstFunction *cst) {
+    if (cst == NULL) cant_happen("null CstFunction");
+    LINE(cst);
 
-    consume(TOKEN_RIGHT_SQUARE, "Expect ']' after '[' <list>");
-    emitByte(OP_NIL);
-    while (count > 0) {
-        emitByte(OP_CONS);
-        count--;
-    }
-}
-
-static void funExpr(bool canAssign) {
+    const char *name = "anon";
+    Token token;
+    token.type = TOKEN_IDENTIFIER;
+    token.start = name;
+    token.length = 4;
+    token.line = line;
     markInitialized();
-    function(TYPE_FUNCTION);
+    function(cst, TYPE_FUNCTION, token);
 }
 
-ParseRule rules[] = {
-    [TOKEN_LEFT_PAREN]      = {grouping,    call,   PREC_CALL},
-    [TOKEN_RIGHT_PAREN]     = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_LEFT_BRACE]      = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_RIGHT_BRACE]     = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_COMMA]           = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_DOT]	            = {NULL,        dot,    PREC_CALL},
-    [TOKEN_MINUS]           = {unary,       binary, PREC_TERM},
-    [TOKEN_PLUS]            = {NULL,        binary, PREC_TERM},
-    [TOKEN_SEMICOLON]       = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_SLASH]           = {NULL,        binary, PREC_FACTOR},
-    [TOKEN_STAR]            = {NULL,        binary, PREC_FACTOR},
-    [TOKEN_LEFT_SQUARE]     = {list,        NULL,   PREC_NONE},
-    [TOKEN_RIGHT_SQUARE]    = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_AT]              = {NULL,        right,  PREC_CONS},
-    [TOKEN_AT_AT]           = {NULL,        right,  PREC_CONS},
-    [TOKEN_SWITCH]          = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_CASE]            = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_COLON]           = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_DEFAULT]         = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_BANG]            = {unary,       NULL,   PREC_NONE},
-    [TOKEN_BANG_EQUAL]      = {NULL,        binary, PREC_EQUALITY},
-    [TOKEN_EQUAL]           = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_EQUAL_EQUAL]     = {NULL,        binary, PREC_EQUALITY},
-    [TOKEN_GREATER]         = {unary,       binary, PREC_COMPARISON},
-    [TOKEN_GREATER_EQUAL]   = {NULL,        binary, PREC_COMPARISON},
-    [TOKEN_LESS]            = {unary,       binary, PREC_COMPARISON},
-    [TOKEN_LESS_EQUAL]      = {NULL,        binary, PREC_COMPARISON},
-    [TOKEN_IDENTIFIER]      = {variable,    NULL,   PREC_NONE},
-    [TOKEN_STRING]		    = {string,      NULL,   PREC_NONE},
-    [TOKEN_NUMBER]		    = {number,      NULL,   PREC_NONE},
-    [TOKEN_AND]		        = {NULL,        and_,   PREC_AND},
-    [TOKEN_CLASS]		    = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_ELSE]		    = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_FALSE]		    = {literal,     NULL,   PREC_NONE},
-    [TOKEN_FOR]		        = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_FUN]		        = {funExpr,     NULL,   PREC_NONE},
-    [TOKEN_IF]		        = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_NIL]		        = {literal,     NULL,   PREC_NONE},
-    [TOKEN_OR]		        = {NULL,        or_,    PREC_OR},
-    [TOKEN_PRINT]		    = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_RETURN]		    = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_SUPER]		    = {super_,      NULL,   PREC_NONE},
-    [TOKEN_THIS]		    = {this_,       NULL,   PREC_NONE},
-    [TOKEN_TRUE]		    = {literal,     NULL,   PREC_NONE},
-    [TOKEN_VAR]		        = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_WHILE]		    = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_ERROR]		    = {NULL,        NULL,   PREC_NONE},
-    [TOKEN_EOF]		        = {NULL,        NULL,   PREC_NONE}
-};
+static void expression(CstExpression *cst) {
+    if (cst == NULL) cant_happen("null CstExpression (expression)");
+    LINE(cst);
 
-static void parsePrecedence(Precedence precedence) {
-    advance();
-    ParseFn prefixRule = getRule(parser.previous.type)->prefix;
-
-    if (prefixRule == NULL) {
-        error("Expect <expression>");
-        return;
+    switch(cst->type) {
+        case CST_CALL_EXPR:
+            call(cst->expression.call);
+            break;
+        case CST_DOT_EXPR:
+            dot(cst->expression.dot);
+            break;
+        case CST_NEGATION_EXPR:
+            unary(cst->expression.unary, OP_NEGATE);
+            break;
+        case CST_SUBTRACTION_EXPR:
+            binary(cst->expression.binary, OP_SUBTRACT);
+            break;
+        case CST_ADDITION_EXPR:
+            binary(cst->expression.binary, OP_ADD);
+            break;
+        case CST_DIVISION_EXPR:
+            binary(cst->expression.binary, OP_DIVIDE);
+            break;
+        case CST_MULTIPLICATION_EXPR:
+            binary(cst->expression.binary, OP_DIVIDE);
+            break;
+        case CST_CONS_EXPR:
+            binary(cst->expression.binary, OP_CONS);
+            break;
+        case CST_APPEND_EXPR:
+            binary(cst->expression.binary, OP_APPEND);
+            break;
+        case CST_NOT_EXPR:
+            unary(cst->expression.unary, OP_NOT);
+            break;
+        case CST_NE_EXPR:
+            binary(cst->expression.binary, OP_EQUAL);
+            emitByte(OP_NOT);
+            break;
+        case CST_EQ_EXPR:
+            binary(cst->expression.binary, OP_EQUAL);
+            break;
+        case CST_CDR_EXPR:
+            unary(cst->expression.unary, OP_CDR);
+            break;
+        case CST_GT_EXPR:
+            binary(cst->expression.binary, OP_GREATER);
+            break;
+        case CST_GE_EXPR:
+            binary(cst->expression.binary, OP_LESS);
+            emitByte(OP_NOT);
+            break;
+        case CST_CAR_EXPR:
+            unary(cst->expression.unary, OP_CAR);
+            break;
+        case CST_LT_EXPR:
+            binary(cst->expression.binary, OP_LESS);
+            break;
+        case CST_LE_EXPR:
+            binary(cst->expression.binary, OP_GREATER);
+            emitByte(OP_NOT);
+            break;
+        case CST_VAR_EXPR:
+            variable(cst->expression.string->value);
+            break;
+        case CST_ASSIGN_EXPR:
+            assign(cst->expression.assign);
+            break;
+        case CST_STRING_EXPR:
+            string(cst->expression.string);
+            break;
+        case CST_NUMBER_EXPR:
+            number(cst->expression.number);
+            break;
+        case CST_AND_EXPR:
+            and_(cst->expression.binary);
+            break;
+        case CST_FALSE_EXPR:
+            emitByte(OP_FALSE);
+            break;
+        case CST_FUN_EXPR:
+            funExpr(cst->expression.function);
+            break;
+        case CST_NIL_EXPR:
+            emitByte(OP_NIL);
+            break;
+        case CST_OR_EXPR:
+            or_(cst->expression.binary);
+            break;
+        case CST_SUPER_GET_EXPR:
+            super_get(cst->expression.string);
+            break;
+        case CST_SUPER_INVOKE_EXPR:
+            super_invoke(cst->expression.callSuper);
+            break;
+        case CST_THIS_EXPR:
+            this_(cst->expression.string);
+            break;
+        case CST_TRUE_EXPR:
+            emitByte(OP_TRUE);
+            break;
+        default:
+            cant_happen("unrecognised CstExpression type");
     }
-
-    bool canAssign = precedence <= PREC_ASSIGNMENT;
-    prefixRule(canAssign);
-
-    while (precedence <= getRule(parser.current.type)->precedence) {
-        advance();
-        ParseFn infixRule = getRule(parser.previous.type)->infix;
-        infixRule(canAssign);
-    }
-
-    if (canAssign && match(TOKEN_EQUAL)) {
-        error("Invalid assignment target");
-    }
 }
 
-static ParseRule *getRule(TokenType type) {
-    return &rules[type];
+static int arguments(CstArgumentList *cst) {
+    if (cst == NULL) return 0;
+    LINE(cst);
+
+    uint8_t constant = parseVariable(cst->name);
+    defineVariable(constant);
+
+    return 1 + arguments(cst->next);
 }
 
-static void expression() {
-    parsePrecedence(PREC_ASSIGNMENT);
-}
+static void function(CstFunction *cst, FunctionType type, Token name) {
+    if (cst == NULL) cant_happen("null CstFunction");
+    LINE(cst);
 
-static void block() {
-    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
-        declaration();
-    }
-
-    consume(TOKEN_RIGHT_BRACE, "Expect '}' after <block>");
-}
-
-static void function(FunctionType type) {
     Compiler compiler;
-    initCompiler(&compiler, type);
+    initCompiler(&compiler, type, &name);
     beginScope();
 
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after function name");
-    if (!check(TOKEN_RIGHT_PAREN)) {
-        do {
-            current->function->arity++;
-            if (current->function->arity > 255) {
-                errorAtCurrent("Can't have more than 255 parameters");
-            }
-            uint8_t constant = parseVariable("Expect parameter name");
-            defineVariable(constant);
-        } while (match(TOKEN_COMMA));
-    }
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after function parameters");
-
-    consume(TOKEN_LEFT_BRACE, "Expect '{' before function body");
-    block();
+    current->function->arity = arguments(cst->arguments);
+    declaration(cst->declarations);
 
     ObjFunction *function = endCompiler();
     emitBytes(OP_CLOSURE, makeConstant(OBJ_VAL(function)));
@@ -716,23 +679,28 @@ static void function(FunctionType type) {
 
 }
 
-static void method() {
-    consume(TOKEN_IDENTIFIER, "Expect method name");
-    uint8_t constant = identifierConstant(&parser.previous);
+static void method(CstMethodList *cst) {
+    if (cst == NULL) return;
+    LINE(cst);
+
+    uint8_t constant = identifierConstant(&cst->name);
     FunctionType type = TYPE_METHOD;
-    if (parser.previous.length == 4 && memcmp(parser.previous.start, "init", 4) == 0) {
+    if (cst->name.length == 4 && memcmp(cst->name.start, "init", 4) == 0) {
         type = TYPE_INITIALIZER;
     }
 
-    function(type);
+    function(cst->function, type, cst->name);
     emitBytes(OP_METHOD, constant);
+    method(cst->next);
 }
 
-static void classDeclaration() {
-    consume(TOKEN_IDENTIFIER, "Expect class name");
-    Token className = parser.previous;
-    uint8_t nameConstant = identifierConstant(&parser.previous);
-    declareVariable();
+static void classDeclaration(CstClassDeclaration *cst) {
+    if (cst == NULL) cant_happen("null CstClassDeclaration");
+    LINE(cst);
+
+    Token className = cst->name;
+    uint8_t nameConstant = identifierConstant(&className);
+    declareVariable(&className);
 
     emitBytes(OP_CLASS, nameConstant);
     defineVariable(nameConstant);
@@ -742,12 +710,12 @@ static void classDeclaration() {
     classCompiler.hasSuperclass = false;
     currentClass = &classCompiler;
 
-    if (match(TOKEN_LESS)) {
-        consume(TOKEN_IDENTIFIER, "Expect superclass name");
-        variable(false);
+    if (cst->hasSuperclass) {
+        Token superName = cst->superName;
+        variable(superName);
 
-        if (identifiersEqual(&className, &parser.previous)) {
-            error("A class can't inherit from itself");
+        if (identifiersEqual(&className, &superName)) {
+            error("A class can't inherit from itself", &superName);
         }
 
         beginScope();
@@ -760,13 +728,9 @@ static void classDeclaration() {
     }
 
     namedVariable(className, false);
-    consume(TOKEN_LEFT_BRACE, "Expect '{' after class name");
 
-    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
-        method();
-    }
+    method(cst->methods);
 
-    consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body");
     emitByte(OP_POP);
 
     if (classCompiler.hasSuperclass) {
@@ -776,45 +740,48 @@ static void classDeclaration() {
     currentClass = currentClass->enclosing;
 }
 
-static void funDeclaration() {
-    uint8_t global = parseVariable("Expect function name");
+static void funDeclaration(CstFunDeclaration *cst) {
+    if (cst == NULL) cant_happen("null CstFunDeclaration");
+    LINE(cst);
+
+    uint8_t global = parseVariable(cst->name);
     markInitialized();
-    function(TYPE_FUNCTION);
+    function(cst->function, TYPE_FUNCTION, cst->name);
     defineVariable(global);
 }
 
-static void varDeclaration() {
-    uint8_t global = parseVariable("Expect variable name");
+static void varDeclaration(CstVarDeclaration *cst) {
+    if (cst == NULL) cant_happen("null CstVarDeclaration");
+    LINE(cst);
 
-    if (match(TOKEN_EQUAL)) {
-        expression();
+    uint8_t global = parseVariable(cst->name);
+
+    if (cst->initializer) {
+        expression(cst->initializer);
     } else {
         emitByte(OP_NIL);
     }
 
-    consume(TOKEN_SEMICOLON, "Expect ';' after variable declaration");
     defineVariable(global);
 }
 
-static void expressionStatement() {
-    expression();
-    consume(TOKEN_SEMICOLON, "Expect ';' after <expression>");
+static void expressionStatement(CstExpression *cst) {
+    if (cst == NULL) cant_happen("null CstExpression statement");
+    LINE(cst);
+
+    expression(cst);
     emitByte(OP_POP);
 }
 
-static int caseStatements() {
+static int caseStatements(CstDeclarationList *cst) {
+    if (cst == NULL) return 0;
+    LINE(cst);
+
     int start = currentChunk()->count;
-    int count = 0;
     beginScope();
-    while(   !check(TOKEN_RIGHT_BRACE)
-          && !check(TOKEN_EOF)
-          && !check(TOKEN_CASE)
-          && !check(TOKEN_DEFAULT)) {
-        statement();
-        count++;
-    }
+    declaration(cst);
     endScope();
-    return count ? start : 0;
+    return start;
 }
 
 
@@ -830,14 +797,7 @@ static int caseStatements() {
  *         statements
  * }
  */
-static void switchStatement() {
-#define CHECK_MAX_CASES() \
-    do { \
-        if (breakCount == MAX_CASES || contCount == MAX_CASES) { \
-            error("Maximum switch cases exceeded"); \
-            breakCount = contCount = 0; \
-        } \
-    } while(0)
+static void switchStatement(CstSwitchStatement *cst) {
 #define PATCH_CONTS_TO_STATEMENTS(s) \
     do { \
         while (contCount > 0) { \
@@ -845,104 +805,89 @@ static void switchStatement() {
         } \
     } while(0)
 
-    int seenDefault = 0;
+    if (cst == NULL) cant_happen("null CstSwitchStatement");
+    LINE(cst);
+
     int breaks[MAX_CASES]; // max 256 cases with statements (jumps to end)
     int breakCount = 0;
     int conts[MAX_CASES]; // max 256 consecutive cases with no statements (jumps to next statement)
     int contCount = 0;
 
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'switch'");
-    expression();                                          // [vala]
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after <expression>");
-    consume(TOKEN_LEFT_BRACE, "Expect '{' before switch statement body");
+    expression(cst->expression);                                          // [vala]
 
-    while(!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
-        if (seenDefault) {
-            errorAtCurrent("'default' must be the last case in a switch statement");
-        }
+    CstCaseList *cases = cst->cases;
 
-        if (match(TOKEN_CASE)) {                           // [vala]
-            CHECK_MAX_CASES();
-            emitByte(OP_DUP);                              // [vala vala]
-            expression();                                  // [vala vala valb]
-            consume(TOKEN_COLON, "Expect ':' afer 'case' <expression>");
-            emitByte(OP_EQUAL);                            // [vala bool]
-            int nextCase = emitJump(OP_JUMP_IF_FALSE);     // [vala bool] -> nextCase
-            emitByte(OP_POP);                              // [vala]
-            int statements = caseStatements();             // [vala]      <- continue
+    while(cases != NULL) {
+        if (!cases->isDefault) {                                  // [vala]
+            emitByte(OP_DUP);                                     // [vala vala]
+            expression(cases->expression);                        // [vala vala valb]
+            emitByte(OP_EQUAL);                                   // [vala bool]
+            int nextCase = emitJump(OP_JUMP_IF_FALSE);            // [vala bool] -> nextCase
+            emitByte(OP_POP);                                     // [vala]
+            int statements = caseStatements(cases->declarations); // [vala]      <- continue
             if (statements) {
-                PATCH_CONTS_TO_STATEMENTS(statements);     // [vala]
-                breaks[breakCount++] = emitJump(OP_JUMP);  // [vala]      -> break
+                PATCH_CONTS_TO_STATEMENTS(statements);            // [vala]
+                breaks[breakCount++] = emitJump(OP_JUMP);         // [vala]      -> break
             } else {
-                conts[contCount++] = emitJump(OP_JUMP);    // [vala]      -> continue
+                conts[contCount++] = emitJump(OP_JUMP);           // [vala]      -> continue
             }
-            patchJump(nextCase);                           // [vala bool] <- nextCase
-            emitByte(OP_POP);                              // [vala]
-        } else if (match(TOKEN_DEFAULT)) {                 // [vala]
-            CHECK_MAX_CASES();
-            seenDefault = 1;
-            consume(TOKEN_COLON, "Expect ':' afer 'default'");
-            int statements = caseStatements();             // [vala]      <- continue
+            patchJump(nextCase);                                  // [vala bool] <- nextCase
+            emitByte(OP_POP);                                     // [vala]
+        } else {                                                  // [vala]
+            int statements = caseStatements(cases->declarations); // [vala]      <- continue
             if (statements) {
-                PATCH_CONTS_TO_STATEMENTS(statements);     // [vala]
+                PATCH_CONTS_TO_STATEMENTS(statements);            // [vala]
             }
-        } else {
-            errorAtCurrent("Expect 'case' or 'default' in switch statement body");
         }
+        cases = cases->next;
     }
-
-    consume(TOKEN_RIGHT_BRACE, "Expect '}' after switch statement body");
 
     while (breakCount > 0) {
         patchJump(breaks[--breakCount]);                   // [vala]     <- break
     }
+
     while (contCount > 0) {
         patchJump(conts[--contCount]);                     // [vala]     <- continue
     }
 
     emitByte(OP_POP);                                      // []
-#undef CHECK_MAX_CASES
 #undef PATCH_CONTS_TO_STATEMENTS
 }
 
-static void forStatement() {
-    beginScope();
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'");
+static void forStatement(CstForStatement *cst) {
+    if (cst == NULL) cant_happen("null CstForStatement");
+    LINE(cst);
 
-    //initializer
-    if (match(TOKEN_SEMICOLON)) {
-    } else if (match(TOKEN_VAR)) {
-        varDeclaration();
-    } else {
-        expressionStatement();
+    beginScope();
+
+    if (cst->init.expression != NULL) {
+        if (cst->isDeclaration) {
+            varDeclaration(cst->init.declaration);
+        } else {
+            expressionStatement(cst->init.expression);
+        }
     }
 
     int loopStart = currentChunk()->count;
     int exitJump = -1;
 
-    // test
-    if(!match(TOKEN_SEMICOLON)) {
-        expression();
-        consume(TOKEN_SEMICOLON, "Expect ';' after loop condition");
+    if(cst->test != NULL) {
+        expression(cst->test);
         exitJump = emitJump(OP_JUMP_IF_FALSE);
         emitByte(OP_POP);
     }
 
-    // update
-    if (!match(TOKEN_RIGHT_PAREN)) {
+    if (cst->update != NULL) {
         int bodyJump = emitJump(OP_JUMP);
         int incrementStart = currentChunk()->count;
-        expression();
+        expression(cst->update);
         emitByte(OP_POP);
-        consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'for' clauses");
-
         emitLoop(loopStart);
         loopStart = incrementStart;
         patchJump(bodyJump);
     }
 
-    // body
-    statement();
+    statement(cst->body);
     emitLoop(loopStart);
     
     if (exitJump != -1) {
@@ -953,67 +898,70 @@ static void forStatement() {
     endScope();
 }
 
-static void ifStatement() {
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'");
-    expression();
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after '(' <condition>");
+static void ifStatement(CstIfStatement *cst) {
+    if (cst == NULL) cant_happen("null CstIfStatement");
+    LINE(cst);
+
+    expression(cst->expression);
     int thenJump = emitJump(OP_JUMP_IF_FALSE);
     emitByte(OP_POP);
-    statement();
+    statement(cst->ifTrue);
     int elseJump = emitJump(OP_JUMP);
     patchJump(thenJump);
     emitByte(OP_POP);
 
-    if (match(TOKEN_ELSE)) statement();
+    if (cst->ifFalse != NULL) statement(cst->ifFalse);
     patchJump(elseJump);
 }
 
-static void printStatement() {
-    expression();
-    consume(TOKEN_SEMICOLON, "Expect ';' after 'print' <statement>");
+static void printStatement(CstExpression *cst) {
+    if (cst == NULL) cant_happen("null CstExpression (printStatement)");
+    LINE(cst);
+
+    expression(cst);
     emitByte(OP_PRINT);
 }
 
-static void returnStatement() {
+static void returnStatement(CstExpression *cst) {
+    if (cst == NULL) cant_happen("null CstExpression (returnStatement)");
+    LINE(cst);
+
     if (current->type == TYPE_SCRIPT) {
-        error("Can't return from top-level code");
+        error("Can't return from top-level code", NULL);
     }
 
-    if (match(TOKEN_SEMICOLON)) {
+    if (cst->type == CST_NIL_EXPR) {
         emitReturn();
     } else {
         if (current->type == TYPE_INITIALIZER) {
-            error("Can't return a value from an initializer");
+            error("Can't return a value from an initializer", NULL);
         }
-        expression();
-        consume(TOKEN_SEMICOLON, "Expect ';' after 'return' <value>");
+        expression(cst);
         emitByte(OP_RETURN);
     }
 }
 
-static void whileStatement() {
-    int loopStart = currentChunk()->count;
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'");
-    expression();
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'while' <condition>");
+static void whileStatement(CstConditionalStatement *cst) {
+    if (cst == NULL) cant_happen("null CstConditionalStatement (whileStatement)");
+    LINE(cst);
 
+    int loopStart = currentChunk()->count;
+    expression(cst->expression);
     int exitJump = emitJump(OP_JUMP_IF_FALSE);
     emitByte(OP_POP);
-    statement();
+    statement(cst->statement);
     emitLoop(loopStart);
     patchJump(exitJump);
     emitByte(OP_POP);
 }
 
-static void doStatement() {
+static void doStatement(CstConditionalStatement *cst) {
+    if (cst == NULL) cant_happen("null CstConditionalStatement (doStatement)");
+    LINE(cst);
+
     int loopStart = currentChunk()->count;       // []     <- loopStart
-    consume(TOKEN_LEFT_BRACE, "Expect '(' after 'do'");
-    block();                                     // []
-    consume(TOKEN_WHILE, "Expect 'while' after 'do' <block>");
-    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'");
-    expression();                                // [bool]
-    consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'while' '(' <expression>");
-    consume(TOKEN_SEMICOLON, "Expect ';' after '(' <expression> ')'");
+    statement(cst->statement);                   // []
+    expression(cst->expression);                 // [bool]
     int loopEnd = emitJump(OP_JUMP_IF_FALSE);    // [bool] -> loopEnd
     emitByte(OP_POP);                            // []
     emitLoop(loopStart);                         // []     -> loopStart
@@ -1021,91 +969,90 @@ static void doStatement() {
     emitByte(OP_POP);                            // []
 }
 
-static void synchronize() {
-    parser.panicMode = false;
+static void declaration(CstDeclarationList *cst) {
+    if (cst == NULL) return;
+    LINE(cst);
 
-    while(parser.current.type != TOKEN_EOF) {
-        if (parser.previous.type == TOKEN_SEMICOLON) return;
-
-        switch (parser.current.type) {
-            case TOKEN_SWITCH:
-            case TOKEN_CLASS:
-            case TOKEN_FUN:
-            case TOKEN_VAR:
-            case TOKEN_FOR:
-            case TOKEN_IF:
-            case TOKEN_WHILE:
-            case TOKEN_DO:
-            case TOKEN_PRINT:
-            case TOKEN_RETURN:
-                return;
-            default:
-                ;
-        }
-
-        advance();
-    }
-}
-
-static void declaration() {
-    if (match(TOKEN_CLASS)) {
-        classDeclaration();
-    } else if (match(TOKEN_FUN)) {
-        funDeclaration();
-    } else if (match(TOKEN_VAR)) {
-        varDeclaration();
-    } else {
-        statement();
+    switch (cst->type) {
+        case CST_CLASS_DECLARATION:
+            classDeclaration(cst->declaration.classDeclaration);
+            break;
+        case CST_FUN_DECLARATION:
+            funDeclaration(cst->declaration.funDeclaration);
+            break;
+        case CST_VAR_DECLARATION:
+            varDeclaration(cst->declaration.varDeclaration);
+            break;
+        case CST_STATEMENT_DECLARATION:
+            statement(cst->declaration.statement);
+            break;
+        default:
+            cant_happen("unrecognised CstDeclarationList type");
     }
 
-    if (parser.panicMode) synchronize();
+    declaration(cst->next);
 }
 
-static void statement() {
-    if (match(TOKEN_PRINT)) {
-        printStatement();
-    } else if (match(TOKEN_SWITCH)) {
-        switchStatement();
-    } else if (match(TOKEN_FOR)) {
-        forStatement();
-    } else if (match(TOKEN_IF)) {
-        ifStatement();
-    } else if (match(TOKEN_RETURN)) {
-        returnStatement();
-    } else if (match(TOKEN_WHILE)) {
-        whileStatement();
-    } else if (match(TOKEN_DO)) {
-        doStatement();
-    } else if (match(TOKEN_LEFT_BRACE)) {
-        beginScope();
-        block();
-        endScope();
-    } else {
-        expressionStatement();
+static void statement(CstStatement *cst) {
+    if (cst == NULL) cant_happen("null CstStatement");
+    LINE(cst);
+
+    switch (cst->type) {
+        case CST_PRINT_STATEMENT:
+            printStatement(cst->statement.expression);
+            break;
+        case CST_SWITCH_STATEMENT:
+            switchStatement(cst->statement.switchStatement);
+            break;
+        case CST_FOR_STATEMENT:
+            forStatement(cst->statement.forStatement);
+            break;
+        case CST_IF_STATEMENT:
+            ifStatement(cst->statement.ifStatement);
+            break;
+        case CST_RETURN_STATEMENT:
+            returnStatement(cst->statement.expression);
+            break;
+        case CST_WHILE_STATEMENT:
+            whileStatement(cst->statement.conditionalStatement);
+            break;
+        case CST_DO_STATEMENT:
+            doStatement(cst->statement.conditionalStatement);
+            break;
+        case CST_BLOCK_STATEMENT:
+            beginScope();
+            declaration(cst->statement.blockStatement);
+            endScope();
+            break;
+        case CST_EXPRESSION_STATEMENT:
+            expressionStatement(cst->statement.expression);
+            break;
+        default:
+            cant_happen("unrecognised CstStatement type");
     }
 }
 
 ObjFunction *compile(const char *source) {
-    CstDeclarationList *tree = parse(source);
+    CstDeclarationList *cst = parse(source);
+
+    if (cst == NULL) {
+        return NULL;
+    }
 #ifdef DEBUG_PRINT_TREE
-    if (tree != NULL) {
-        printCstDeclarationList(tree, 0);
-        printf("\n");
-    }
+    printCstDeclarationList(cst, 0);
+    printf("\n");
 #endif
-    initScanner(source);
+
     Compiler compiler;
-    initCompiler(&compiler, TYPE_SCRIPT);
-    parser.hadError = false;
-    parser.panicMode = false;
-    advance();
+    initCompiler(&compiler, TYPE_SCRIPT, NULL);
+    hadError = false;
+    line = 0;
 
-    while (!match(TOKEN_EOF)) {
-        declaration();
-    }
+    declaration(cst);
 
-    ObjFunction *function = endCompiler();
-    return parser.hadError ? NULL : function;
+    ObjFunction *result = endCompiler();
+    if (hadError) return NULL;
+    return result;
 }
 
 void markCompilerRoots() {

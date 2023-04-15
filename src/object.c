@@ -169,5 +169,7 @@ void printObject(Value value) {
     case OBJ_UPVALUE:
       printf("<upvalue>");
       break;
+    default:
+      cant_happen("unrecognised object type (printObject)");
     }
 }

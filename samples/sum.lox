@@ -1,0 +1,5 @@
+fun sum(a, b, c) {
+    return a + b + c;
+}
+
+print 1 + sum(2, 3, 4);

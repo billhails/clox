@@ -1,0 +1,3 @@
+var notfun = 1;
+
+notfun();

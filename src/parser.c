@@ -11,8 +11,6 @@
 #include "debug.h"
 #endif
 
-#define MAX_CASES 256
-
 typedef struct {
     Token current;
     Token previous;
@@ -35,6 +33,12 @@ typedef enum {
     PREC_PRIMARY
 } Precedence;
 
+typedef struct {
+    int breakCount;
+    int contCount;
+    bool seenDefault;
+} SwitchState;
+
 typedef CstExpression *(*PrefixFn)(bool canAssign);
 typedef CstExpression *(*InfixFn)(CstExpression *current, bool canAssign);
 
@@ -54,6 +58,10 @@ typedef enum {
 } FunctionType;
 
 static Parser parser;
+
+static int line() {
+    return parser.previous.line;
+}
 
 static void errorAt(Token *token, const char *message) {
     if (parser.panicMode) return;
@@ -77,11 +85,6 @@ static void error(const char *message) {
 
 static void errorAtCurrent(const char *message) {
     errorAt(&parser.current, message);
-}
-
-static void cant_happen(const char *msg) {
-    fprintf(stderr, "internal error: %s\n", msg);
-    exit(1);
 }
 
 static void advance() {
@@ -149,7 +152,7 @@ static CstExpressionList *argumentList() {
     }
     CstExpression *arg = expression();
     match(TOKEN_COMMA);
-    return newCstExpressionList(arg, argumentList());
+    return newCstExpressionList(line(), arg, argumentList());
 }
 
 static CstExpression *binary(CstExpression *lhs, bool canAssign) {
@@ -173,7 +176,7 @@ static CstExpression *binary(CstExpression *lhs, bool canAssign) {
         default:
             cant_happen("unrecognised token type in binary()");
     }
-    return newCstExpression(type, CST_BINARY_FIELD(newCstBinaryExpression(lhs, rhs)));
+    return newCstExpression(line(), type, CST_BINARY_FIELD(newCstBinaryExpression(line(), lhs, rhs)));
 }
 
 static CstExpression *right(CstExpression *lhs, bool canAssign) {
@@ -187,45 +190,56 @@ static CstExpression *right(CstExpression *lhs, bool canAssign) {
         default:
             cant_happen("unrecognised token in right()");
     }
-    return newCstExpression(type, CST_BINARY_FIELD(newCstBinaryExpression(lhs, rhs)));
+    return newCstExpression(line(), type, CST_BINARY_FIELD(newCstBinaryExpression(line(), lhs, rhs)));
 }
 
 static CstExpression *call(CstExpression *lhs, bool canAssign) {
     CstExpressionList *args = argumentList();
-    return newCstExpression(CST_CALL_EXPR, CST_CALL_FIELD(newCstCallExpression(lhs, args)));
+    return newCstExpression(line(), CST_CALL_EXPR, CST_CALL_FIELD(newCstCallExpression(line(), lhs, args)));
 }
 
 static CstExpression *dot(CstExpression *lhs, bool canAssign) {
     Token name = parseVariable("Expect property name after '.'");
-    CstStringExpression *property = newCstStringExpression(name);
-    CstExpression *rhs = newCstExpression(CST_VAR_EXPR, CST_STRING_FIELD(property));
-    CstExpression *pair = newCstExpression(
+    CstDotExpression *dot = newCstDotExpression(
+        line(),
+        lhs,
+        name,
+        CST_DOT_GET,
+        (CstDotAction){.value = NULL}
+    );
+    CstExpression *pair = newCstExpression(line(), 
         CST_DOT_EXPR,
-        CST_BINARY_FIELD(newCstBinaryExpression(lhs, rhs))
+        CST_DOT_FIELD(dot)
     );
 
     if (canAssign && match(TOKEN_EQUAL)) {
         CstExpression *value = expression();
-        return newCstExpression(CST_SETPROP_EXPR, CST_BINARY_FIELD(newCstBinaryExpression(pair, value)));
+        dot->type = CST_DOT_ASSIGN;
+        dot->action.value = value;
     } else if (match(TOKEN_LEFT_PAREN)) {
         CstExpressionList *args = argumentList();
-        return newCstExpression(
-            CST_INVOKE_EXPR,
-            CST_CALL_FIELD(newCstCallExpression(pair, args))
-        );
-    } else {
-        return pair;
+        dot->type = CST_DOT_INVOKE;
+        dot->action.arguments = args;
     }
+
+    return pair;
 }
 
-static CstExpression *literal(bool canAssign) {
-    switch (parser.previous.type) {
-        case TOKEN_FALSE: return newCstExpression(CST_FALSE_EXPR, CST_NO_FIELD); break;
-        case TOKEN_NIL:   return newCstExpression(CST_NIL_EXPR, CST_NO_FIELD);   break;
-        case TOKEN_TRUE:  return newCstExpression(CST_TRUE_EXPR, CST_NO_FIELD);  break;
+static CstExpression *literal(bool canAssign)
+{
+	switch (parser.previous.type) {
+        case TOKEN_FALSE:
+            return newCstExpression(line(), CST_FALSE_EXPR, CST_NO_FIELD);
+            break;
+        case TOKEN_NIL:
+            return newCstExpression(line(), CST_NIL_EXPR, CST_NO_FIELD);
+            break;
+        case TOKEN_TRUE:
+            return newCstExpression(line(), CST_TRUE_EXPR, CST_NO_FIELD);
+            break;
         default:
             cant_happen("unrecognised type in literal()");
-    }
+	}
 }
 
 static CstExpression *grouping(bool canAssign) {
@@ -236,26 +250,28 @@ static CstExpression *grouping(bool canAssign) {
 
 static CstExpression *number(bool canAssign) {
     double value = strtod(parser.previous.start, NULL);
-    return newCstExpression(CST_NUMBER_EXPR, CST_NUMBER_FIELD(value));
+    return newCstExpression(line(), CST_NUMBER_EXPR, CST_NUMBER_FIELD(value));
 }
 
 static CstExpression *string(bool canAssign) {
-    return newCstExpression(
+    return newCstExpression(line(), 
         CST_STRING_EXPR,
-        CST_STRING_FIELD(newCstStringExpression(parser.previous))
+        CST_STRING_FIELD(newCstStringExpression(line(), parser.previous))
     );
 }
 
 static CstExpression *namedVariable(Token name, bool canAssign) {
-    CstExpression *var = newCstExpression(CST_VAR_EXPR, CST_STRING_FIELD(newCstStringExpression(name)));
     if (canAssign && match(TOKEN_EQUAL)) {
         CstExpression *value = expression();
-        return newCstExpression(
+        return newCstExpression(line(), 
             CST_ASSIGN_EXPR,
-            CST_BINARY_FIELD(newCstBinaryExpression(var, value))
+            CST_ASSIGN_FIELD(newCstAssignExpression(line(), name, value))
         );
     } else {
-        return var;
+        return newCstExpression(line(), 
+            CST_VAR_EXPR,
+            CST_STRING_FIELD(newCstStringExpression(line(), name))
+        );
     }
 }
 
@@ -275,28 +291,26 @@ static CstExpression *super_(bool canAssign) {
     Token methodName = parseVariable("Expect superclass method name");
 
     if (match(TOKEN_LEFT_PAREN)) {
-        return newCstExpression(
+        return newCstExpression(line(), 
             CST_SUPER_INVOKE_EXPR,
-            CST_CALL_FIELD(
-                newCstCallExpression(
-                    newCstExpression(
-                        CST_VAR_EXPR,
-                        CST_STRING_FIELD(newCstStringExpression(methodName))
-                    ),
+            CST_CALL_SUPER_FIELD(
+                newCstCallSuperExpression(line(), 
+                    methodName,
                     argumentList()
                 )
             )
         );
     } else {
-        return newCstExpression(
+        return newCstExpression(line(), 
             CST_SUPER_GET_EXPR,
-            CST_STRING_FIELD(newCstStringExpression(methodName))
+            CST_STRING_FIELD(newCstStringExpression(line(), methodName))
         );
     }
 }
 
 static CstExpression *this_(bool canAssign) {
-    return newCstExpression(CST_THIS_EXPR, CST_NO_FIELD);
+    Token token = parser.previous;
+    return newCstExpression(line(), CST_THIS_EXPR, CST_STRING_FIELD(newCstStringExpression(line(), token)));
 }
 
 static CstExpression *unary(bool canAssign) {
@@ -320,23 +334,23 @@ static CstExpression *unary(bool canAssign) {
             cant_happen("happen unrecognised type in unary()");
     }
 
-    return newCstExpression(type, CST_UNARY_FIELD(operand));
+    return newCstExpression(line(), type, CST_UNARY_FIELD(operand));
 }
 
 static CstExpression *list(bool canAssign) {
     if (match(TOKEN_RIGHT_SQUARE)) {
-        return newCstExpression(CST_NIL_EXPR, CST_NO_FIELD);
+        return newCstExpression(line(), CST_NIL_EXPR, CST_NO_FIELD);
     }
     CstExpression *car = expression();
     match(TOKEN_COMMA);
-    return newCstExpression(
-        CST_LIST_EXPR,
-        CST_BINARY_FIELD(newCstBinaryExpression(car, list(canAssign)))
+    return newCstExpression(line(), 
+        CST_CONS_EXPR,
+        CST_BINARY_FIELD(newCstBinaryExpression(line(), car, list(canAssign)))
     );
 }
 
 static CstExpression *funExpr(bool canAssign) {
-    return newCstExpression(CST_FUN_EXPR, CST_FUNCTION_FIELD(function()));
+    return newCstExpression(line(), CST_FUN_EXPR, CST_FUNCTION_FIELD(function()));
 }
 
 static ParseRule parseRules[] = {
@@ -427,23 +441,26 @@ static CstDeclarationList *block() {
     return declaration(matchRightBrace);
 }
 
-static CstArgumentList *arguments() {
+static CstArgumentList *arguments(int count) {
     if (match(TOKEN_RIGHT_PAREN)) {
         return NULL;
     }
+    if (count > 255) {
+        errorAtCurrent("Can't have more than 255 parameters");
+    }
     Token name = parseVariable("Expect variable name");
     match(TOKEN_COMMA);
-    return newCstArgumentList(name, arguments());
+    return newCstArgumentList(line(), name, arguments(count + 1));
 }
 
 static CstFunction *function() {
     consume(TOKEN_LEFT_PAREN, "Expect '(' after function name");
-    CstArgumentList *args = arguments();
+    CstArgumentList *args = arguments(0);
 
     consume(TOKEN_LEFT_BRACE, "Expect '{' before function body");
     CstDeclarationList *body = block();
 
-    return newCstFunction(args, body);
+    return newCstFunction(line(), args, body);
 }
 
 static CstMethodList *method(checkFn check) {
@@ -452,7 +469,7 @@ static CstMethodList *method(checkFn check) {
     }
     Token name = parseVariable("Expect method name");
     CstFunction *fun = function();
-    return newCstMethodList(name, fun, method(check));
+    return newCstMethodList(line(), name, fun, method(check));
 }
 
 static CstClassDeclaration *classDeclaration() {
@@ -474,7 +491,7 @@ static CstClassDeclaration *classDeclaration() {
 
     consume(TOKEN_LEFT_BRACE, "Expect '{' after class name");
 
-    return newCstClassDeclaration(
+    return newCstClassDeclaration(line(), 
         className,
         hasSuperclass,
         superName,
@@ -484,7 +501,7 @@ static CstClassDeclaration *classDeclaration() {
 
 static CstFunDeclaration *funDeclaration() {
     Token name = parseVariable("Expect function name");
-    return newCstFunDeclaration(name, function());
+    return newCstFunDeclaration(line(), name, function());
 }
 
 static CstVarDeclaration *varDeclaration() {
@@ -493,9 +510,9 @@ static CstVarDeclaration *varDeclaration() {
     CstVarDeclaration *result;
 
     if (match(TOKEN_EQUAL)) {
-        result = newCstVarDeclaration(name, expression());
+        result = newCstVarDeclaration(line(), name, expression());
     } else {
-        result = newCstVarDeclaration(name, NULL);
+        result = newCstVarDeclaration(line(), name, NULL);
     }
 
     consume(TOKEN_SEMICOLON, "Expect ';' after variable declaration");
@@ -515,7 +532,15 @@ static bool checkCaseEnd() {
            || check(TOKEN_DEFAULT));
 }
 
-static CstCaseList *caseList(checkFn check) {
+static CstCaseList *caseList(checkFn check, SwitchState *state) {
+#define CHECK_MAX_CASES() \
+    do { \
+        if (state->breakCount == MAX_CASES || state->contCount == MAX_CASES) { \
+            error("Maximum switch cases exceeded"); \
+            state->breakCount = state->contCount = 0; \
+        } \
+    } while(0)
+
     if (check()) {
         return NULL;
     }
@@ -525,10 +550,20 @@ static CstCaseList *caseList(checkFn check) {
     bool isDefault = false;
 
     if (match(TOKEN_CASE)) {
+        CHECK_MAX_CASES();
         condition = expression();
         consume(TOKEN_COLON, "Expect ':' afer 'case' <expression>");
         declarations = declaration(checkCaseEnd);
+        if (declarations)
+            state->breakCount++;
+        else
+            state->contCount++;
     } else if (match(TOKEN_DEFAULT)) {
+        CHECK_MAX_CASES();
+        if (state->seenDefault) {
+            errorAtCurrent("'default' must be the last case in a switch statement");
+        }
+        state->seenDefault = true;
         isDefault = true;
         consume(TOKEN_COLON, "Expect ':' afer 'default'");
         declarations = declaration(checkCaseEnd);
@@ -537,12 +572,14 @@ static CstCaseList *caseList(checkFn check) {
         return NULL;
     }
 
-    return newCstCaseList(
+    return newCstCaseList(line(), 
         isDefault,
         condition,
         declarations,
-        caseList(check)
+        caseList(check, state)
     );
+
+#undef CHECK_MAX_CASES
 }
 
 static CstSwitchStatement *switchStatement() {
@@ -551,9 +588,14 @@ static CstSwitchStatement *switchStatement() {
     consume(TOKEN_RIGHT_PAREN, "Expect ')' after <expression>");
     consume(TOKEN_LEFT_BRACE, "Expect '{' before switch statement body");
 
-    return newCstSwitchStatement(
+    SwitchState state;
+    state.breakCount = 0;
+    state.contCount = 0;
+    state.seenDefault = false;
+
+    return newCstSwitchStatement(line(), 
         value,
-        caseList(matchRightBrace)
+        caseList(matchRightBrace, &state)
     );
 }
 
@@ -592,7 +634,7 @@ static CstForStatement *forStatement() {
 
     // body
     CstStatement *body = statement();
-    return newCstForStatement(isDeclaration, init, test, update, body);
+    return newCstForStatement(line(), isDeclaration, init, test, update, body);
 }
 
 static CstIfStatement *ifStatement() {
@@ -604,12 +646,12 @@ static CstIfStatement *ifStatement() {
 
     if (match(TOKEN_ELSE)) ifFalse = statement();
 
-    return newCstIfStatement(condition, ifTrue, ifFalse);
+    return newCstIfStatement(line(), condition, ifTrue, ifFalse);
 }
 
 static CstExpression *returnStatement() {
     if (match(TOKEN_SEMICOLON)) {
-        return NULL;
+        return newCstExpression(line(), CST_NIL_EXPR, CST_NO_FIELD);
     } else {
         CstExpression *value = expression();
         consume(TOKEN_SEMICOLON, "Expect ';' after 'return' <value>");
@@ -622,7 +664,7 @@ static CstConditionalStatement *whileStatement() {
     CstExpression *condition = expression();
     consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'while' <condition>");
     CstStatement *body = statement();
-    return newCstConditionalStatement(condition, body);
+    return newCstConditionalStatement(line(), condition, body);
 }
 
 static CstConditionalStatement *doStatement() {
@@ -632,7 +674,7 @@ static CstConditionalStatement *doStatement() {
     CstExpression *condition = expression();
     consume(TOKEN_RIGHT_PAREN, "Expect ')' after 'while' '(' <expression>");
     consume(TOKEN_SEMICOLON, "Expect ';' after '(' <expression> ')'");
-    return newCstConditionalStatement(condition, body);
+    return newCstConditionalStatement(line(), condition, body);
 }
 
 static void synchronize() {
@@ -685,7 +727,7 @@ static CstDeclarationList *declaration(checkFn check) {
 
     if (parser.panicMode) synchronize();
 
-    return newCstDeclarationList(type, value, declaration(check));
+    return newCstDeclarationList(line(), type, value, declaration(check));
 }
 
 static CstStatement *statement() {
@@ -721,7 +763,7 @@ static CstStatement *statement() {
         value.expression = expressionStatement();
     }
 
-    return newCstStatement(type, value);
+    return newCstStatement(line(), type, value);
 }
 
 CstDeclarationList *parse(const char *source) {

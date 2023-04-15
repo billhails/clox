@@ -5,4 +5,6 @@
 
 CstDeclarationList *parse(const char *source);
 
+#define MAX_CASES 256
+
 #endif
